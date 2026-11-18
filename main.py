@@ -371,11 +371,60 @@ class LoginPage(QWidget):
         branding_layout.addStretch()
         branding_layout.addWidget(welcome)
 
-        # Login left, branding right
-        
+        # Login is LEFT, branding is RIGHT
+
+        main_layout.addWidget(login_panel, 58)
         main_layout.addWidget(branding_panel, 42)
-        main_layout.addWidget(login_panel, 42)
-        
+
+    def login(self):
+
+        username = self.username_input.text().strip()
+        password = self.password_input.text()
+
+        if not username:
+
+            QMessageBox.warning(
+                self,
+                "Username Required",
+                "Please enter your username."
+            )
+
+            self.username_input.setFocus()
+            return
+
+        if not password:
+
+            QMessageBox.warning(
+                self,
+                "Password Required",
+                "Please enter your password."
+            )
+
+            self.password_input.setFocus()
+            return
+
+        account = DEMO_ACCOUNTS.get(username.lower())
+
+        if account and account["password"] == password:
+
+            self.login_success.emit({
+                "username": username,
+                "name": account["name"],
+                "role": account["role"]
+            })
+
+            self.password_input.clear()
+
+        else:
+
+            QMessageBox.critical(
+                self,
+                "Login Failed",
+                "Incorrect username or password."
+            )
+
+    def apply_styles(self):
+
         self.setStyleSheet("""
 
             #loginPanel {
