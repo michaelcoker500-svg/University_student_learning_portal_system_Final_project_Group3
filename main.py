@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout,
     QGridLayout, QStackedWidget, QTableWidget,
     QTableWidgetItem, QMessageBox, QInputDialog,
-    QHeaderView, QAbstractItemView
+    QHeaderView, QAbstractItemView, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -271,6 +271,7 @@ class LoginPage(QWidget):
         super().__init__()
 
         self.setup_ui()
+        self.apply_styles()
 
     def setup_ui(self):
 
@@ -314,11 +315,29 @@ class LoginPage(QWidget):
         )
         self.password_input.setObjectName("inputField")
 
+        self.show_password_checkbox = QCheckBox("Show password")
+        self.show_password_checkbox.toggled.connect(self.toggle_password)
+
+        self.error_label = QLabel("")
+        self.error_label.setObjectName("errorLabel")
+        self.error_label.setWordWrap(True)
+
+        self.username_input.textChanged.connect(
+            lambda: self.error_label.clear()
+        )
+        self.password_input.textChanged.connect(
+            lambda: self.error_label.clear()
+        )
+
         sign_in_button = QPushButton("Sign In")
         sign_in_button.setObjectName("signInButton")
         sign_in_button.clicked.connect(self.login)
 
         self.password_input.returnPressed.connect(self.login)
+
+        self.username_input.returnPressed.connect(
+        self.password_input.setFocus
+)
 
         demo_notice = QLabel(
             "Demo accounts: admin, lecturer or student."
@@ -336,6 +355,8 @@ class LoginPage(QWidget):
 
         login_layout.addWidget(password_label)
         login_layout.addWidget(self.password_input)
+        login_layout.addWidget(self.show_password_checkbox)
+        
 
         login_layout.addSpacing(15)
         login_layout.addWidget(sign_in_button)
@@ -372,9 +393,10 @@ class LoginPage(QWidget):
         branding_layout.addWidget(welcome)
 
         # Login is LEFT, branding is RIGHT
-
-        main_layout.addWidget(login_panel, 58)
+        
         main_layout.addWidget(branding_panel, 42)
+        main_layout.addWidget(login_panel, 42)
+       
 
     def login(self):
 
@@ -488,43 +510,19 @@ class LoginPage(QWidget):
                 border-radius: 5px;
             }
 
-        """)
-
-    def login(self):
-
-        username = self.username_input.text().strip().lower()
-        password = self.password_input.text()
-
-        if not username or not password:
-
-            QMessageBox.warning(
-                self,
-                "Login Required",
-                "Enter both your username and password."
-            )
-            return
-
-        account = DEMO_ACCOUNTS.get(username)
-
-        if account and account["password"] == password:
-
-            user = {
-                "username": username,
-                "name": account["name"],
-                "role": account["role"]
+            #errorLabel {
+                color: #A93232;
+                font-size: 12px;
             }
 
-            self.password_input.clear()
-            self.login_success.emit(user)
+        """)
 
+    def toggle_password(self, checked):
+        
+        if checked:
+           self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
-
-            QMessageBox.critical(
-                self,
-                "Login Failed",
-                "Incorrect username or password."
-            )
-
+           self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
 
 # =========================================================
 # 4. DASHBOARD AND MANAGEMENT PAGES
@@ -1654,6 +1652,9 @@ class StudentPortalApp(QMainWindow):
 
         self.login_page.username_input.clear()
         self.login_page.password_input.clear()
+
+        self.login_page.error_label.clear()
+        self.login_page.username_input.setFocus()
 
 
 # =========================================================
