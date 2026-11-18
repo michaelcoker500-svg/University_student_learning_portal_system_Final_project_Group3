@@ -186,9 +186,10 @@ class LoginPage(QWidget):
         branding_layout.addWidget(description)
 
         # Login is LEFT, branding is RIGHT
-
-        main_layout.addWidget(login_panel, 58)
+        
         main_layout.addWidget(branding_panel, 42)
+        main_layout.addWidget(login_panel, 42)
+        
 
     def login(self):
 
