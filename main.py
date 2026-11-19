@@ -515,6 +515,44 @@ class LoginPage(QWidget):
                 font-size: 12px;
             }
 
+            /* Active sidebar button */
+
+            QPushButton#menuButton[active="true"] {
+                background-color: #2874A6;
+                color: white;
+                border-left: 4px solid #FFFFFF;
+                font-weight: bold;
+            }
+
+            QPushButton#menuButton[active="false"] {
+                background-color: transparent;
+                color: white;
+                border: none;
+                text-align: left;
+                padding: 13px;
+                border-radius: 5px;
+            }
+
+            /* User information in the header */
+
+            QLabel#userName {
+                color: #17365D;
+                font-size: 13px;
+                font-weight: bold;
+            }
+
+            QLabel#userRole {
+                color: #667085;
+                font-size: 11px;
+            }
+
+            /* Header separator */
+
+            QFrame#headerSeparator {
+                background-color: #D9E0E8;
+                border: none;
+            }
+
         """)
 
     def toggle_password(self, checked):
@@ -571,6 +609,9 @@ class DashboardPage(QWidget):
             "Enrolments"
         ]
 
+        # Store navigation buttons so we can highlight the selected page.
+        self.menu_buttons = []
+
         for index, item in enumerate(menu_items):
 
             button = QPushButton(item)
@@ -582,6 +623,7 @@ class DashboardPage(QWidget):
             )
 
             sidebar_layout.addWidget(button)
+            self.menu_buttons.append(button)
 
         sidebar_layout.addStretch()
 
@@ -603,18 +645,41 @@ class DashboardPage(QWidget):
 
         top_bar = QHBoxLayout()
 
+                # PROFESSIONAL TOP HEADER
+
+        top_bar = QHBoxLayout()
+
+        # Current page title
         self.page_heading = QLabel("Dashboard")
         self.page_heading.setObjectName("pageHeading")
 
-        user_label = QLabel(
-            f"{self.user['name']} | {self.user['role']}"
-        )
+        # User information
+        user_info_layout = QVBoxLayout()
+
+        user_name_label = QLabel(self.user["name"])
+        user_name_label.setObjectName("userName")
+
+        user_role_label = QLabel(self.user["role"])
+        user_role_label.setObjectName("userRole")
+
+        user_info_layout.addWidget(user_name_label)
+        user_info_layout.addWidget(user_role_label)
 
         top_bar.addWidget(self.page_heading)
         top_bar.addStretch()
-        top_bar.addWidget(user_label)
+        top_bar.addLayout(user_info_layout)
 
         content_layout.addLayout(top_bar)
+
+        # Header separator
+        content_layout.addSpacing(12)
+
+        separator = QFrame()
+        separator.setObjectName("headerSeparator")
+        separator.setFixedHeight(1)
+
+        content_layout.addWidget(separator)
+
         content_layout.addSpacing(20)
 
         # ADD THE FOUR PAGES
@@ -630,6 +695,7 @@ class DashboardPage(QWidget):
         main_layout.addWidget(content)
 
         self.apply_styles()
+        self.open_page(0)
 
     # -----------------------------------------------------
     # DASHBOARD
@@ -1375,17 +1441,21 @@ class DashboardPage(QWidget):
     # -----------------------------------------------------
 
     def open_page(self, page_number):
-
         self.pages.setCurrentIndex(page_number)
 
         headings = [
             "Dashboard",
-            "Students",
-            "Courses",
-            "Enrolments"
+            "Student Management",
+            "Course Management",
+            "Enrolment Management"
         ]
 
         self.page_heading.setText(headings[page_number])
+
+        for index, button in enumerate(self.menu_buttons):
+            button.setProperty("active", index == page_number)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
         if page_number == 0:
             self.refresh_dashboard()
