@@ -1,17 +1,14 @@
 import sys
 
-from datetime import datetime
-
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel,
     QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout,
     QGridLayout, QStackedWidget, QTableWidget,
     QTableWidgetItem, QMessageBox, QInputDialog,
-    QHeaderView, QAbstractItemView, QCheckBox,
-    QScrollArea, QListWidget, QListWidgetItem, QListView
+    QHeaderView, QAbstractItemView, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont
 
 
 # =========================================================
@@ -378,6 +375,8 @@ class LoginPage(QWidget):
 
         logo = QLabel("🎓")
         logo.setObjectName("logo")
+        logo.setFixedSize(60, 60)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         university_name = QLabel(
             "UNIVERSITY\nSTUDENT\nLEARNING PORTAL"
@@ -462,6 +461,8 @@ class LoginPage(QWidget):
 
             #logo {
                 font-size: 35px;
+                background-color: white;
+                border-radius: 30px;
             }
 
             #loginHeading {
@@ -518,44 +519,6 @@ class LoginPage(QWidget):
                 font-size: 12px;
             }
 
-            /* Active sidebar button */
-
-            QPushButton#menuButton[active="true"] {
-                background-color: #2874A6;
-                color: white;
-                border-left: 4px solid #FFFFFF;
-                font-weight: bold;
-            }
-
-            QPushButton#menuButton[active="false"] {
-                background-color: transparent;
-                color: white;
-                border: none;
-                text-align: left;
-                padding: 13px;
-                border-radius: 5px;
-            }
-
-            /* User information in the header */
-
-            QLabel#userName {
-                color: #17365D;
-                font-size: 13px;
-                font-weight: bold;
-            }
-
-            QLabel#userRole {
-                color: #667085;
-                font-size: 11px;
-            }
-
-            /* Header separator */
-
-            QFrame#headerSeparator {
-                background-color: #D9E0E8;
-                border: none;
-            }
-
         """)
 
     def toggle_password(self, checked):
@@ -579,9 +542,6 @@ class DashboardPage(QWidget):
 
         self.portal = portal
         self.user = user
-
-        # Activities are stored in memory only for this login session.
-        self.activities = []
 
         self.setup_ui()
 
@@ -615,9 +575,6 @@ class DashboardPage(QWidget):
             "Enrolments"
         ]
 
-        # Store navigation buttons so we can highlight the selected page.
-        self.menu_buttons = []
-
         for index, item in enumerate(menu_items):
 
             button = QPushButton(item)
@@ -629,12 +586,13 @@ class DashboardPage(QWidget):
             )
 
             sidebar_layout.addWidget(button)
-            self.menu_buttons.append(button)
 
         sidebar_layout.addStretch()
 
         logout_button = QPushButton("Logout")
         logout_button.setObjectName("logoutButton")
+        logout_button.setCursor(Qt.CursorShape.PointingHandCursor)
+
         logout_button.clicked.connect(
             self.logout_requested.emit
         )
@@ -649,41 +607,20 @@ class DashboardPage(QWidget):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(30, 25, 30, 25)
 
-        # PROFESSIONAL TOP HEADER
-
         top_bar = QHBoxLayout()
 
-        # Current page title
         self.page_heading = QLabel("Dashboard")
         self.page_heading.setObjectName("pageHeading")
 
-        # User information
-        user_info_layout = QVBoxLayout()
-
-        user_name_label = QLabel(self.user["name"])
-        user_name_label.setObjectName("userName")
-
-        user_role_label = QLabel(self.user["role"])
-        user_role_label.setObjectName("userRole")
-
-        user_info_layout.addWidget(user_name_label)
-        user_info_layout.addWidget(user_role_label)
+        user_label = QLabel(
+            f"{self.user['name']} | {self.user['role']}"
+        )
 
         top_bar.addWidget(self.page_heading)
         top_bar.addStretch()
-        top_bar.addLayout(user_info_layout)
+        top_bar.addWidget(user_label)
 
         content_layout.addLayout(top_bar)
-
-        # Header separator
-        content_layout.addSpacing(12)
-
-        separator = QFrame()
-        separator.setObjectName("headerSeparator")
-        separator.setFixedHeight(1)
-
-        content_layout.addWidget(separator)
-
         content_layout.addSpacing(20)
 
         # ADD THE FOUR PAGES
@@ -699,7 +636,6 @@ class DashboardPage(QWidget):
         main_layout.addWidget(content)
 
         self.apply_styles()
-        self.open_page(0)
 
     # -----------------------------------------------------
     # DASHBOARD
@@ -707,9 +643,7 @@ class DashboardPage(QWidget):
 
     def create_dashboard(self):
 
-        page = QFrame()
-        page.setObjectName("dashboardPage")
-
+        page = QWidget()
         layout = QVBoxLayout(page)
         layout.setSpacing(18)
 
@@ -763,42 +697,15 @@ class DashboardPage(QWidget):
 
         layout.addLayout(card_layout)
 
-        # QUICK ACTIONS PANEL
+        refresh_button = QPushButton("Refresh Dashboard")
+        refresh_button.clicked.connect(self.refresh_dashboard)
 
-        layout.addWidget(self.create_quick_actions_card())
-
-        # RECENT ACTIVITY PANEL
-
-        layout.addWidget(self.create_recent_activity_card())
-
+        layout.addWidget(refresh_button)
         layout.addStretch()
 
         self.refresh_dashboard()
-        self.refresh_activity_display()
 
-        # The dashboard can grow taller than the window, so it is
-        # wrapped in a scroll area to keep every widget reachable.
-        # This replaces the old Refresh Dashboard button because
-        # Refresh Overview in Quick Actions does the same refresh.
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(page)
-
-        return scroll
-
-    def open_add_student(self):
-        self.open_page(1)
-        self.add_student()
-
-    def open_add_course(self):
-        self.open_page(2)
-        self.add_course()
-
-    def open_add_enrollment(self):
-        self.open_page(3)
-        self.add_enrollment()
+        return page
 
     def refresh_dashboard(self):
 
@@ -822,119 +729,6 @@ class DashboardPage(QWidget):
             )
 
             self.progress_count.setText(str(finished))
-
-    # -----------------------------------------------------
-    # ACTIVITY TRACKING
-    # -----------------------------------------------------
-
-    def record_activity(self, message):
-
-        # Add a short time so the activity is easy to follow.
-        time_text = datetime.now().strftime("%H:%M")
-
-        # Place the newest activity at the beginning of the list.
-        self.activities.insert(0, f"{time_text} - {message}")
-
-        # Keep only the latest eight activities.
-        if len(self.activities) > 8:
-            self.activities = self.activities[:8]
-
-        # Refresh the Recent Activity display.
-        self.refresh_activity_display()
-
-    def refresh_activity_display(self):
-
-        self.activity_list.clear()
-
-        # Friendly message when nothing has happened yet.
-        if not self.activities:
-
-            empty_item = QListWidgetItem(
-                "No recent activity yet."
-            )
-            empty_item.setForeground(QColor("#98A2B3"))
-
-            self.activity_list.addItem(empty_item)
-            return
-
-        # Newest activity is first in the list.
-        for message in self.activities:
-            self.activity_list.addItem(QListWidgetItem(message))
-
-    # -----------------------------------------------------
-    # QUICK ACTIONS AND RECENT ACTIVITY PANELS
-    # -----------------------------------------------------
-
-    def create_panel_card(self, heading_text, description_text):
-
-        card = QFrame()
-        card.setObjectName("panelCard")
-
-        card_layout = QVBoxLayout(card)
-
-        heading = QLabel(heading_text)
-        heading.setObjectName("panelHeading")
-
-        description = QLabel(description_text)
-        description.setObjectName("panelDescription")
-
-        card_layout.addWidget(heading)
-        card_layout.addWidget(description)
-        card_layout.addSpacing(6)
-
-        return card, card_layout
-
-    def create_quick_actions_card(self):
-
-        card, card_layout = self.create_panel_card(
-            "Quick Actions",
-            "Jump straight to the most common portal tasks."
-        )
-
-        # Keep references to the buttons (handy for tests).
-        self.quick_buttons = {}
-
-        # Each button reuses an existing method.
-        actions = [
-            ("Add Student", self.open_add_student),
-            ("Add Course", self.open_add_course),
-            ("Create Enrolment", self.open_add_enrollment),
-            ("Refresh Overview", self.refresh_dashboard)
-        ]
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
-
-        for text, handler in actions:
-
-            button = QPushButton(text)
-            button.setObjectName("quickButton")
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(handler)
-
-            button_row.addWidget(button)
-            self.quick_buttons[text] = button
-
-        card_layout.addLayout(button_row)
-
-        return card
-
-    def create_recent_activity_card(self):
-
-        card, card_layout = self.create_panel_card(
-            "Recent Activity",
-            "The latest actions from this session, newest first."
-        )
-
-        self.activity_list = QListWidget()
-        self.activity_list.setObjectName("activityList")
-        self.activity_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.activity_list.setWordWrap(True)
-        self.activity_list.setResizeMode(QListView.ResizeMode.Adjust)
-
-        card_layout.addWidget(self.activity_list)
-
-        return card
 
     # -----------------------------------------------------
     # STUDENT MANAGEMENT
@@ -1075,10 +869,6 @@ class DashboardPage(QWidget):
             self.refresh_students()
             self.refresh_dashboard()
 
-            self.record_activity(
-                f"Student registered successfully: {student.describe()}"
-            )
-
         else:
 
             QMessageBox.warning(
@@ -1112,10 +902,6 @@ class DashboardPage(QWidget):
 
             QMessageBox.information(
                 self, "Deleted", "Student deleted successfully."
-            )
-
-            self.record_activity(
-                f"Student record deleted: {student_id}"
             )
 
         else:
@@ -1285,10 +1071,6 @@ class DashboardPage(QWidget):
             self.refresh_courses()
             self.refresh_dashboard()
 
-            self.record_activity(
-                f"New course added: {course.describe()}"
-            )
-
         else:
 
             QMessageBox.warning(
@@ -1322,10 +1104,6 @@ class DashboardPage(QWidget):
 
             QMessageBox.information(
                 self, "Deleted", "Course deleted successfully."
-            )
-
-            self.record_activity(
-                f"Course record deleted: {code}"
             )
 
         else:
@@ -1529,11 +1307,6 @@ class DashboardPage(QWidget):
         self.refresh_enrollments()
         self.refresh_dashboard()
 
-        self.record_activity(
-            f"New enrolment created: {enrollment.enrollment_id} "
-            f"({student.Fullname} - {course.title})"
-        )
-
     def complete_lesson(self):
 
         row = self.enrollment_table.currentRow()
@@ -1556,11 +1329,6 @@ class DashboardPage(QWidget):
                 self,
                 "Lesson Completed",
                 f"Progress is now {enrollment.progress_percent():.0f}%."
-            )
-
-            self.record_activity(
-                f"Lesson marked as completed: {enrollment.enrollment_id} "
-                f"({enrollment.progress_percent():.0f}% done)"
             )
 
         else:
@@ -1597,25 +1365,13 @@ class DashboardPage(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        if self.portal.delete_enrollment(enrollment_id):
+        self.portal.delete_enrollment(enrollment_id)
 
-            QMessageBox.information(
-                self,
-                "Removed",
-                "Enrolment removed successfully."
-            )
-
-            self.record_activity(
-                f"Enrolment deleted: {enrollment_id}"
-            )
-
-        else:
-
-            QMessageBox.warning(
-                self,
-                "Remove Failed",
-                "That enrolment no longer exists."
-            )
+        QMessageBox.information(
+            self,
+            "Removed",
+            "Enrolment removed successfully."
+        )
 
         self.refresh_enrollments()
         self.refresh_dashboard()
@@ -1625,21 +1381,17 @@ class DashboardPage(QWidget):
     # -----------------------------------------------------
 
     def open_page(self, page_number):
+
         self.pages.setCurrentIndex(page_number)
 
         headings = [
             "Dashboard",
-            "Student Management",
-            "Course Management",
-            "Enrolment Management"
+            "Students",
+            "Courses",
+            "Enrolments"
         ]
 
         self.page_heading.setText(headings[page_number])
-
-        for index, button in enumerate(self.menu_buttons):
-            button.setProperty("active", index == page_number)
-            button.style().unpolish(button)
-            button.style().polish(button)
 
         if page_number == 0:
             self.refresh_dashboard()
@@ -1684,22 +1436,6 @@ class DashboardPage(QWidget):
                 background-color: #2874A6;
             }
 
-            QPushButton#menuButton[active="true"] {
-                background-color: #2874A6;
-                color: white;
-                border-left: 4px solid #FFFFFF;
-                font-weight: bold;
-            }
-
-            QPushButton#menuButton[active="false"] {
-                background-color: transparent;
-                color: white;
-                border: none;
-                text-align: left;
-                padding: 13px;
-                border-radius: 5px;
-            }
-
             #logoutButton {
                 background-color: #A93232;
                 color: white;
@@ -1707,6 +1443,15 @@ class DashboardPage(QWidget):
                 padding: 12px;
                 border-radius: 5px;
             }
+            #logoutButton:hover {
+            background-color: #C0392B;
+            border: 1px solid #E74C3C;
+            }
+            #logoutButton:pressed {
+            background-color: #7B241C;
+            border: 1px solid #641E16;
+            }
+            
 
             #contentArea {
                 background-color: #F4F6F9;
@@ -1716,22 +1461,6 @@ class DashboardPage(QWidget):
                 color: #17365D;
                 font-size: 23px;
                 font-weight: bold;
-            }
-
-            QLabel#userName {
-                color: #17365D;
-                font-size: 13px;
-                font-weight: bold;
-            }
-
-            QLabel#userRole {
-                color: #667085;
-                font-size: 11px;
-            }
-
-            QFrame#headerSeparator {
-                background-color: #D9E0E8;
-                border: none;
             }
 
             #welcomeHeading {
@@ -1795,120 +1524,6 @@ class DashboardPage(QWidget):
                 padding: 10px;
                 border: none;
                 font-weight: bold;
-            }
-
-            /* Dashboard page background inside the scroll area */
-
-            #dashboardPage {
-                background-color: #F4F6F9;
-            }
-
-            QScrollArea {
-                background-color: #F4F6F9;
-                border: none;
-            }
-
-            /* Quick Actions and Recent Activity panels */
-
-            #panelCard {
-                background-color: white;
-                border: 1px solid #E3E8EF;
-                border-radius: 8px;
-                padding: 14px;
-            }
-
-            #panelCard:hover,
-            #statCard:hover {
-                border: 1px solid #B9C7D8;
-            }
-
-            #panelHeading {
-                color: #17365D;
-                font-size: 15px;
-                font-weight: bold;
-            }
-
-            #panelDescription {
-                color: #667085;
-                font-size: 12px;
-            }
-
-            #quickButton {
-                background-color: #F0F5FA;
-                color: #17365D;
-                border: 1px solid #D9E0E8;
-                border-radius: 5px;
-                padding: 10px;
-                font-weight: bold;
-            }
-
-            #quickButton:hover {
-                background-color: #2874A6;
-                color: white;
-            }
-
-            #activityList {
-                background-color: #F8FAFC;
-                border: 1px solid #E3E8EF;
-                border-radius: 5px;
-                padding: 6px;
-            }
-
-            #activityList::item {
-                color: #344054;
-                padding: 7px;
-                border-bottom: 1px solid #E8EDF2;
-            }
-
-            #activityList::item:selected {
-                background-color: #EAF0F6;
-                color: #17365D;
-            }
-
-            /* Slim modern scroll bars */
-
-            QScrollBar:vertical {
-                background: #EDF1F6;
-                width: 10px;
-                margin: 0;
-            }
-
-            QScrollBar:horizontal {
-                background: #EDF1F6;
-                height: 10px;
-                margin: 0;
-            }
-
-            QScrollBar::handle:vertical {
-                background: #C3CFDD;
-                border-radius: 5px;
-                min-height: 30px;
-            }
-
-            QScrollBar::handle:horizontal {
-                background: #C3CFDD;
-                border-radius: 5px;
-                min-width: 30px;
-            }
-
-            QScrollBar::handle:vertical:hover,
-            QScrollBar::handle:horizontal:hover {
-                background: #2874A6;
-            }
-
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical,
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0;
-                height: 0;
-            }
-
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical,
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: transparent;
             }
 
         """)
