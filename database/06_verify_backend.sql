@@ -35,7 +35,8 @@ BEGIN
         EXECUTE p_statement;
     EXCEPTION WHEN OTHERS THEN
         GET STACKED DIAGNOSTICS observed_state = RETURNED_SQLSTATE;
-        IF observed_state <> p_sqlstate THEN
+        -- Older PostgreSQL releases report a RESTRICT action as a foreign-key violation.
+        IF observed_state <> p_sqlstate AND NOT (p_sqlstate = '23001' AND observed_state = '23503') THEN
             RAISE EXCEPTION 'FAIL: %; expected SQLSTATE %, received %', p_label, p_sqlstate, observed_state;
         END IF;
         RAISE NOTICE 'PASS: %', p_label;
@@ -104,9 +105,8 @@ SELECT o.offering_id, l.lecturer_id FROM uslp.course_offerings o
 JOIN uslp.courses c ON c.course_id = o.course_id
 JOIN uslp.lecturers l ON l.department_id = c.department_id WHERE c.course_code LIKE 'V-%';
 
-INSERT INTO uslp.students(student_number, programme_id, first_name, last_name, email, study_level, admitted_on)
-SELECT 'VERIFY2026' || lpad(v.n::text, 3, '0'), p.programme_id, v.first_name, v.last_name,
-       'student' || v.n::text || '@example.invalid', 2, '2025-09-01'
+INSERT INTO uslp.students(student_number, programme_id, full_name)
+SELECT 'VERIFY2026' || lpad(v.n::text, 3, '0'), p.programme_id, concat_ws(' ', v.first_name, v.last_name)
 FROM (VALUES
     (1, 'Aisha', 'Kamara', 'VERIFY-BSE'), (2, 'Ibrahim', 'Sesay', 'VERIFY-BSE'),
     (3, 'Hawa', 'Conteh', 'VERIFY-BSE'), (4, 'Musa', 'Bangura', 'VERIFY-BSE'),
@@ -159,8 +159,8 @@ DECLARE sid BIGINT; sid2 BIGINT; db_offering BIGINT; web_offering BIGINT; later_
         eid BIGINT; eid2 BIGINT; class1 BIGINT; class2 BIGINT; other_class BIGINT;
         actor BIGINT; att_id BIGINT; programme BIGINT; new_enrollment BIGINT;
 BEGIN
-    PERFORM pg_temp.assert_true((SELECT count(*) = 20 FROM information_schema.tables
-                                WHERE table_schema = 'uslp' AND table_type = 'BASE TABLE'), '20 application tables');
+    PERFORM pg_temp.assert_true((SELECT count(*) = 22 FROM information_schema.tables
+                                WHERE table_schema = 'uslp' AND table_type = 'BASE TABLE'), '22 application tables');
     PERFORM pg_temp.assert_true((SELECT count(*) = 5 FROM information_schema.views WHERE table_schema = 'uslp'), '5 reporting views');
     PERFORM pg_temp.assert_true((SELECT count(*) = 20 FROM uslp.students WHERE student_number LIKE 'VERIFY2026%'), '20 sample students');
     PERFORM pg_temp.assert_true((SELECT count(*) = 40 FROM uslp.enrollments e JOIN uslp.students s USING (student_id) WHERE s.student_number LIKE 'VERIFY2026%'), '40 sample enrollments');
@@ -190,10 +190,10 @@ BEGIN
     SELECT attendance_id INTO att_id FROM uslp.attendance WHERE enrollment_id = eid AND class_session_id = class1;
     PERFORM set_config('uslp.actor_user_id', actor::text, TRUE);
 
-    PERFORM pg_temp.expect_error(format('INSERT INTO uslp.students(student_number, programme_id, first_name, last_name, study_level) VALUES (''VERIFY2026001'', %s, ''Test'', ''Student'', 1)', programme), '23505', 'duplicate student number rejected');
-    PERFORM pg_temp.expect_error('INSERT INTO uslp.students(student_number, programme_id, first_name, last_name, study_level) VALUES (''BAD-FK'', -999, ''Test'', ''Student'', 1)', '23503', 'missing programme rejected');
-    PERFORM pg_temp.expect_error(format('UPDATE uslp.students SET first_name = '''' WHERE student_id = %s', sid), '23514', 'blank first name rejected');
-    PERFORM pg_temp.expect_error(format('UPDATE uslp.students SET study_level = 0 WHERE student_id = %s', sid), '23514', 'invalid study level rejected');
+    PERFORM pg_temp.expect_error(format('INSERT INTO uslp.students(student_number, programme_id, full_name) VALUES (''VERIFY2026001'', %s, ''Test Student'')', programme), '23505', 'duplicate student number rejected');
+    PERFORM pg_temp.expect_error('INSERT INTO uslp.students(student_number, programme_id, full_name) VALUES (''BAD-FK'', -999, ''Test Student'')', '23503', 'missing programme rejected');
+    PERFORM pg_temp.expect_error(format('UPDATE uslp.students SET full_name = '''' WHERE student_id = %s', sid), '23514', 'blank full name rejected');
+    PERFORM pg_temp.expect_error(format('UPDATE uslp.students SET status = ''invalid'' WHERE student_id = %s', sid), '23514', 'unknown student status rejected');
     PERFORM pg_temp.expect_error('UPDATE uslp.courses SET credits = 0 WHERE course_code = ''V-DCOMP114''', '23514', 'nonpositive course credits rejected');
     PERFORM pg_temp.expect_error('UPDATE uslp.users SET is_active = TRUE WHERE username = ''verify_admin''', '23514', 'active account requires password hash');
     PERFORM pg_temp.expect_error('UPDATE uslp.users SET password_hash = ''plaintext'' WHERE username = ''verify_admin''', '23514', 'plain-text password storage rejected');
@@ -230,8 +230,8 @@ BEGIN
     PERFORM pg_temp.assert_true((SELECT actor_user_id = actor AND old_data ->> 'status' = 'present' AND new_data ->> 'status' = 'late'
         FROM uslp.audit_logs WHERE table_name = 'attendance' ORDER BY audit_id DESC LIMIT 1), 'audit captures actor and before/after values');
 
-    PERFORM pg_temp.expect_error(format('DELETE FROM uslp.students WHERE student_id = %s', sid), '23503', 'student with enrollments cannot be deleted');
-    PERFORM pg_temp.expect_error('DELETE FROM uslp.departments WHERE department_code = ''VERIFY-ICT''', '23503', 'referenced department cannot be deleted');
+    PERFORM pg_temp.expect_error(format('DELETE FROM uslp.students WHERE student_id = %s', sid), '23001', 'student with enrollments cannot be deleted');
+    PERFORM pg_temp.expect_error('DELETE FROM uslp.departments WHERE department_code = ''VERIFY-ICT''', '23001', 'referenced department cannot be deleted');
     PERFORM pg_temp.expect_error(format('UPDATE uslp.enrollments SET offering_id = %s WHERE enrollment_id = %s', web_offering, eid), '23514', 'enrollment history cannot be reassigned');
     PERFORM pg_temp.expect_error(format('UPDATE uslp.course_offerings SET semester_id = (SELECT semester_id FROM uslp.semesters WHERE semester_name = ''Verify Semester 4'') WHERE offering_id = %s', db_offering), '23514', 'offering history cannot be reassigned');
     PERFORM pg_temp.expect_error('UPDATE uslp.semesters SET starts_on = ''2026-08-01'' WHERE semester_name = ''Verify Semester 3''', '23514', 'semester outside academic session rejected');
