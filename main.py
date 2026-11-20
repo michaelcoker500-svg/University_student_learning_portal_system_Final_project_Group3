@@ -1,5 +1,30 @@
 import sys
 from portal_client import Portal as DatabasePortal, PortalError
+from threading import Thread
+
+from portal_service import local_server
+from settings import make_engine, read_connection
+
+
+def start_portal_service():
+    try:
+        engine = make_engine(read_connection())
+        server = local_server(engine)
+    except (ValueError, OSError) as error:
+        QMessageBox.critical(None, "Portal startup", str(error))
+        raise SystemExit(1) from error
+
+    worker = Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+
+    def stop_service():
+        server.shutdown()
+        worker.join()
+        server.server_close()
+        engine.dispose()
+
+    QApplication.instance().aboutToQuit.connect(stop_service)
+    return server.server_port
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -1919,7 +1944,7 @@ class StudentPortalApp(QMainWindow):
 
         # One Portal object manages the application records.
 
-        self.portal = DatabasePortal(8765)
+        self.portal = DatabasePortal(start_portal_service())
 
     
 
