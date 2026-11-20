@@ -848,54 +848,56 @@ class DashboardPage(QWidget):
             )
 
     def add_student(self):
-
-        student_id, ok = QInputDialog.getText(
-            self,
-            "Add Student",
-            "Enter Student ID:"
-        )
-
+        number, ok = QInputDialog.getText(self, "Add Student", "Enter student number:")
         if not ok:
             return
 
-        student_id = student_id.strip().upper()
-
-        if not student_id:
-            QMessageBox.warning(self, "Invalid ID", "Student ID is required.")
+        number = number.strip()
+        if not number:
+            QMessageBox.warning(self, "Add Student", "Enter a student number.")
             return
 
-        fullname, ok = QInputDialog.getText(
-            self,
-            "Add Student",
-            "Enter Full Name:"
-        )
-
+        name, ok = QInputDialog.getText(self, "Add Student", "Enter full name:")
         if not ok:
             return
 
-        fullname = fullname.strip()
-
-        if not fullname:
-            QMessageBox.warning(self, "Invalid Name", "Full name is required.")
+        name = name.strip()
+        if not name:
+            QMessageBox.warning(self, "Add Student", "Enter the student's full name.")
             return
 
-        student = Student(student_id, fullname)
+        programmes = self.portal.lookups.get("programmes", [])
+        if not programmes:
+            QMessageBox.warning(self, "Add Student", "No programme is available.")
+            return
 
-        if self.portal.add_student(student):
+        choices = {f"{p['name']} (#{p['id']})": p["id"] for p in programmes}
+        choice, ok = QInputDialog.getItem(
+            self, "Add Student", "Select programme:", list(choices), 0, False
+        )
+        if not ok:
+            return
 
-            QMessageBox.information(
-                self, "Success", "Student added successfully."
+        try:
+            self.portal.request(
+                "add_student",
+                number=number,
+                name=name,
+                programme=choices[choice],
             )
+        except PortalError as error:
+            QMessageBox.warning(self, "Could not save student", str(error))
+            return
 
-            self.refresh_students()
-            self.refresh_dashboard()
+        try:
+            self.portal.refresh()
+        except PortalError as error:
+            QMessageBox.warning(self, "Student saved", f"Could not refresh the list. {error}")
+            return
 
-        else:
-
-            QMessageBox.warning(
-                self, "Duplicate Student",
-                "That student ID already exists."
-            )
+        self.refresh_students()
+        self.refresh_dashboard()
+        QMessageBox.information(self, "Student saved", f"Saved student number {number}.")
 
     def delete_student(self):
 
