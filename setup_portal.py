@@ -14,6 +14,7 @@ from psycopg import sql
 from settings import CONFIG, DATABASE, DISPLAY_NAME, ROLE, USERNAME, read_connection
 
 MIGRATION = Path(__file__).with_name("07_desktop_integration.sql")
+ROSTER_MIGRATION = Path(__file__).with_name("08_student_roster.sql")
 ROLES = ("Administrator", "Registrar", "Lecturer", "Student", "Super Administrator")
 
 
@@ -33,7 +34,7 @@ def grant_runtime(conn, config, create):
         "GRANT USAGE ON SCHEMA uslp TO {}",
         (
             "GRANT SELECT ON uslp.users, uslp.roles, uslp.permissions, uslp.user_roles, "
-            "uslp.role_permissions, uslp.students, uslp.programmes, uslp.departments, "
+            "uslp.role_permissions, uslp.students, uslp.student_accounts, uslp.programmes, uslp.departments, "
             "uslp.courses, uslp.enrollments, uslp.semesters, uslp.academic_sessions, uslp.lecturers, "
             "uslp.course_offerings, uslp.teaching_assignments, uslp.class_sessions, uslp.attendance, "
             "uslp.v_user_permissions, uslp.v_student_directory TO {}"
@@ -77,10 +78,12 @@ def add_account(conn, username, display_name, role, password, profile_number=Non
     ).fetchone()[0]
     conn.execute("INSERT INTO uslp.user_roles(user_id,role_id) VALUES (%s,%s)", (uid, role_row[0]))
     if role in ("Student", "Lecturer"):
-        table, key = ("students", "student_number") if role == "Student" else ("lecturers", "staff_number")
-        link = sql.SQL("UPDATE uslp.{} SET user_id=%s WHERE {}=%s AND user_id IS NULL").format(
-            sql.Identifier(table), sql.Identifier(key)
-        )
+        if role == "Student":
+            link = """INSERT INTO uslp.student_accounts(user_id, student_id)
+                SELECT %s, student_id FROM uslp.students WHERE student_number=%s
+                ON CONFLICT (student_id) DO NOTHING"""
+        else:
+            link = "UPDATE uslp.lecturers SET user_id=%s WHERE staff_number=%s AND user_id IS NULL"
         if conn.execute(link, (uid, profile_number)).rowcount != 1:
             raise ValueError(
                 "That profile is missing or already linked. Check its official ID. "
@@ -113,7 +116,7 @@ def configure(owner, username, display, role, password, profile=None, path=None)
                 "to_regprocedure('uslp.enroll_student(bigint,bigint)')"
             ).fetchone()
             if any(value is None for value in current[1:]):
-                raise ValueError("Choose the database containing the 20-table USLP backend and its views.")
+                raise ValueError("Choose the USLP database containing the class-list view and enrollment function.")
             installed = conn.execute("""
                 SELECT count(*) = 3 FROM information_schema.columns
                 WHERE table_schema='uslp' AND (table_name,column_name) IN
@@ -121,6 +124,7 @@ def configure(owner, username, display, role, password, profile=None, path=None)
             """).fetchone()[0]
             if not installed:
                 conn.execute(MIGRATION.read_text(encoding="utf-8"))
+            conn.execute(ROSTER_MIGRATION.read_text(encoding="utf-8"))
             grant_runtime(conn, runtime, new_settings)
             match = conn.execute(
                 "SELECT display_name, is_active, ARRAY(SELECT r.role_name "

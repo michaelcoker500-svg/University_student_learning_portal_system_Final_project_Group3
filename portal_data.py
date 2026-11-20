@@ -66,9 +66,10 @@ class Access:
             conn.execute(
                 text("""
             SELECT u.username, coalesce(u.display_name, s.full_name,
-                       nullif(concat_ws(' ',s.first_name,s.last_name),''),
                        nullif(concat_ws(' ',l.first_name,l.last_name),''), u.username) AS name
-            FROM uslp.users u LEFT JOIN uslp.students s ON s.user_id=u.user_id
+            FROM uslp.users u
+            LEFT JOIN uslp.student_accounts a ON a.user_id=u.user_id
+            LEFT JOIN uslp.students s ON s.student_id=a.student_id
             LEFT JOIN uslp.lecturers l ON l.user_id=u.user_id
             WHERE u.user_id=:uid AND u.is_active AND
                   (u.locked_until IS NULL OR u.locked_until <= now()) FOR SHARE OF u
@@ -126,14 +127,16 @@ class Access:
 # Only these fixed predicates are interpolated into queries. User input is never SQL.
 ASSIGNED = """EXISTS (SELECT 1 FROM uslp.teaching_assignments ta JOIN uslp.lecturers l
     USING(lecturer_id) WHERE ta.offering_id=o.offering_id AND l.user_id=:uid AND l.is_active)"""
-STUDENT_SCOPE = f"""(:staff OR (:student AND s.user_id=:uid) OR (:lecturer AND EXISTS (
+OWN_STUDENT = """EXISTS (SELECT 1 FROM uslp.student_accounts a
+    WHERE a.student_id=s.student_id AND a.user_id=:uid)"""
+STUDENT_SCOPE = f"""(:staff OR (:student AND {OWN_STUDENT}) OR (:lecturer AND EXISTS (
     SELECT 1 FROM uslp.enrollments e JOIN uslp.course_offerings o USING(offering_id)
     WHERE e.student_id=s.student_id AND {ASSIGNED})))"""
 COURSE_SCOPE = f"""(:staff OR EXISTS (SELECT 1 FROM uslp.course_offerings o
     WHERE o.course_id=c.course_id AND ((:lecturer AND {ASSIGNED}) OR (:student AND EXISTS (
-       SELECT 1 FROM uslp.enrollments e JOIN uslp.students s USING(student_id)
-       WHERE e.offering_id=o.offering_id AND s.user_id=:uid)))))"""
-ENROLLMENT_SCOPE = f"""(:staff OR (:student AND s.user_id=:uid) OR (:lecturer AND {ASSIGNED}))"""
+       SELECT 1 FROM uslp.enrollments e JOIN uslp.student_accounts a USING(student_id)
+       WHERE e.offering_id=o.offering_id AND a.user_id=:uid)))))"""
+ENROLLMENT_SCOPE = f"""(:staff OR (:student AND {OWN_STUDENT}) OR (:lecturer AND {ASSIGNED}))"""
 
 
 def snapshot(conn, who):
@@ -267,7 +270,9 @@ def deactivate_student(conn, who, id):
 def delete_student(conn, who, id):
     return one(
         conn,
-        "DELETE FROM uslp.students WHERE student_id=:id AND user_id IS NULL RETURNING student_id AS id",
+        """DELETE FROM uslp.students s WHERE s.student_id=:id
+        AND NOT EXISTS (SELECT 1 FROM uslp.student_accounts a WHERE a.student_id=s.student_id)
+        RETURNING s.student_id AS id""",
         id=positive(id),
     )
 
