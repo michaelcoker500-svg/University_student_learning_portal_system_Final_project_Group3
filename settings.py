@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlalchemy import URL, create_engine
 
-DATABASE = "University Student Learning Portal"
+DATABASE = "uslp_db"
 DISPLAY_NAME = "group three admininistator"
 USERNAME = "group3admin"
 ROLE = "Administrator"
