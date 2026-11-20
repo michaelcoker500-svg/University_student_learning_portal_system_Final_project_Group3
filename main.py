@@ -1,5 +1,5 @@
 import sys
-
+from portal_client import Portal as DatabasePortal, PortalError
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -270,9 +270,9 @@ class LoginPage(QWidget):
 
     login_success = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, portal):
         super().__init__()
-
+        self.portal = portal
         self.setup_ui()
         self.apply_styles()
 
@@ -428,25 +428,19 @@ class LoginPage(QWidget):
             self.password_input.setFocus()
             return
 
-        account = DEMO_ACCOUNTS.get(username.lower())
+        try:
+            self.portal.login(username, password)
+        except PortalError as error:
+            QMessageBox.warning(self, "Sign-in failed", str(error))
+            self.password_input.setFocus()
+            return
 
-        if account and account["password"] == password:
+        user = dict(self.portal.user)
+        user["role"] = ", ".join(user["roles"])
 
-            self.login_success.emit({
-                "username": username,
-                "name": account["name"],
-                "role": account["role"]
-            })
-
-            self.password_input.clear()
-
-        else:
-
-            QMessageBox.critical(
-                self,
-                "Login Failed",
-                "Incorrect username or password."
-            )
+        self.password_input.clear()
+        self.show_password_checkbox.setChecked(False)
+        self.login_success.emit(user)
 
     def apply_styles(self):
 
@@ -818,7 +812,7 @@ class DashboardPage(QWidget):
 
             finished = sum(
                 1 for enrollment in self.portal.enrollments.values()
-                if enrollment.is_finished()
+                if enrollment.status == "completed"
             )
 
             self.progress_count.setText(str(finished))
@@ -1010,11 +1004,11 @@ class DashboardPage(QWidget):
         ):
 
             self.student_table.setItem(
-                row, 0, QTableWidgetItem(student.student_id)
+                row, 0, QTableWidgetItem(student.number)
             )
 
             self.student_table.setItem(
-                row, 1, QTableWidgetItem(student.Fullname)
+                row, 1, QTableWidgetItem(student.name)
             )
 
     def filter_students(self, search_text):
@@ -1204,7 +1198,7 @@ class DashboardPage(QWidget):
         ):
 
             self.course_table.setItem(
-                row, 0, QTableWidgetItem(course.course_code)
+                row, 0, QTableWidgetItem(course.code)
             )
 
             self.course_table.setItem(
@@ -1364,7 +1358,7 @@ class DashboardPage(QWidget):
         )
 
         self.enrollment_table = QTableWidget()
-        self.enrollment_table.setColumnCount(6)
+        self.enrollment_table.setColumnCount(7)
 
         self.enrollment_table.setHorizontalHeaderLabels([
             "Enrolment ID",
@@ -1421,15 +1415,7 @@ class DashboardPage(QWidget):
             self.portal.enrollments.values()
         ):
 
-            values = [
-                enrollment.enrollment_id,
-                enrollment.student.Fullname,
-                enrollment.course.title,
-                f"{enrollment.lessons_completed}/"
-                f"{enrollment.course.total_lessons}",
-                f"{enrollment.progress_percent():.0f}%",
-                enrollment.status_text()
-            ]
+            values = enrollment.cells()
 
             for column, value in enumerate(values):
 
@@ -1933,14 +1919,14 @@ class StudentPortalApp(QMainWindow):
 
         # One Portal object manages the application records.
 
-        self.portal = Portal()
+        self.portal = DatabasePortal(8765)
 
-        self.load_sample_data()
+    
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
 
-        self.login_page = LoginPage()
+        self.login_page = LoginPage(self.portal)
 
         self.stack.addWidget(self.login_page)
 

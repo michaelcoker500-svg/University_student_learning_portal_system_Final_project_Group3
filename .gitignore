@@ -1,0 +1,31 @@
+# Each person creates a virtual environment in their own clone.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Local connection details, passwords and database storage
+connection.json
+.env
+.env.*
+!.env.example
+pgpass.conf
+.pgpass
+pgdata/
+private-data/
+*.backup
+*.dump
+*.dump.sql
+*.backup.sql
+
+# These original project materials contain the identifiable class roster.
+03_sample_data*.sql
+05_verify*.sql
+*Class_List*.pdf
+*class_list*.pdf
+USLP_Backend_Starter*.zip
+
+# Local workspace files; the shared launch profiles remain tracked.
+.vscode/settings.json
+.DS_Store
+Thumbs.db
