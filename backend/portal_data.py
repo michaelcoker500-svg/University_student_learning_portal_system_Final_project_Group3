@@ -268,13 +268,19 @@ def deactivate_student(conn, who, id):
 
 
 def delete_student(conn, who, id):
-    return one(
-        conn,
-        """DELETE FROM uslp.students s WHERE s.student_id=:id
-        AND NOT EXISTS (SELECT 1 FROM uslp.student_accounts a WHERE a.student_id=s.student_id)
-        RETURNING s.student_id AS id""",
-        id=positive(id),
-    )
+    id = positive(id)
+    # Lock the student first so a concurrent foreign-key insert cannot slip through.
+    one(conn, "SELECT student_id FROM uslp.students WHERE student_id=:id FOR UPDATE", id=id)
+    linked = conn.scalar(text("""
+        SELECT EXISTS (SELECT 1 FROM uslp.student_accounts WHERE student_id=:id)
+            OR EXISTS (SELECT 1 FROM uslp.enrollments WHERE student_id=:id)
+    """), {"id": id})
+    if linked:
+        raise PortalError("This student has a linked portal account or enrolment history. "
+                          "Use Deactivate to keep those records.", 409)
+    # Both operations and their audit entries commit or roll back together.
+    conn.execute(text("DELETE FROM uslp.class_list_entries WHERE student_id=:id"), {"id": id})
+    return one(conn, "DELETE FROM uslp.students WHERE student_id=:id RETURNING student_id AS id", id=id)
 
 
 def course_values(code, title, department, credits, lessons):

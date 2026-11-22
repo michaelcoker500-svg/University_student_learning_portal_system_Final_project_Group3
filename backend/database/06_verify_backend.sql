@@ -1,5 +1,5 @@
 -- OPTIONAL backend feature tests. All fictional data is rolled back.
--- Run after 01-03 in a development copy, not while other people are editing it.
+-- Run in a quiet development copy after setup_portal has applied 07 and 08 (22 tables).
 -- Identity sequence gaps may remain after rollback; no table rows remain changed.
 BEGIN;
 CREATE FUNCTION pg_temp.database_snapshot() RETURNS JSONB LANGUAGE plpgsql AS $$

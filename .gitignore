@@ -29,3 +29,9 @@ USLP_Backend_Starter*.zip
 .vscode/settings.json
 .DS_Store
 Thumbs.db
+
+# Machine-specific HTTPS profile and local environments
+portal-team*.json
+*.pem
+*.key
+.venv-*/
