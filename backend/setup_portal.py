@@ -55,6 +55,8 @@ def grant_runtime(conn, config, create):
         "GRANT USAGE ON ALL SEQUENCES IN SCHEMA uslp TO {}",
         "GRANT EXECUTE ON FUNCTION uslp.enroll_student(bigint,bigint) TO {}",
     )
+    conn.execute(sql.SQL("GRANT USAGE ON SCHEMA uslp_portal TO {}").format(identity))
+    conn.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON uslp_portal.students TO {}").format(identity))
     for statement in statements:
         conn.execute(sql.SQL(statement).format(identity))
     conn.execute(
@@ -83,7 +85,7 @@ def add_account(conn, username, display_name, role, password, profile_number=Non
     if role in ("Student", "Lecturer"):
         if role == "Student":
             link = """INSERT INTO uslp.student_accounts(user_id, student_id)
-                SELECT %s, student_id FROM uslp.students WHERE student_number=%s
+                SELECT %s, student_id FROM uslp_portal.students WHERE student_number=%s
                 ON CONFLICT (student_id) DO NOTHING"""
         else:
             link = "UPDATE uslp.lecturers SET user_id=%s WHERE staff_number=%s AND user_id IS NULL"

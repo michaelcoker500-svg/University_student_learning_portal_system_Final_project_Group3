@@ -23,7 +23,7 @@ def verify(profile, username, password):
     print(f"Fictional test row: {number}")
     with psycopg.connect(**read_connection(), autocommit=True, connect_timeout=5) as db:
         def stored():
-            return db.execute("SELECT student_id, full_name FROM uslp.students WHERE student_number=%s",
+            return db.execute("SELECT student_id, full_name FROM uslp_portal.students WHERE student_number=%s",
                               (number,)).fetchone()
 
         def visible(client):
@@ -53,7 +53,7 @@ def verify(profile, username, password):
             writer.request("edit_student", id=record_id, name="Sync Test Edited", programme=programme, version=record.version)
             check(stored() == (record_id, "Sync Test Edited"), "GUI client edit reached PostgreSQL")
             with db.transaction():
-                db.execute("UPDATE uslp.students SET full_name=%s WHERE student_id=%s AND student_number=%s",
+                db.execute("UPDATE uslp_portal.students SET full_name=%s WHERE student_id=%s AND student_number=%s",
                            ("Sync Test From SQL", record_id, number))
             first, second = visible(writer), visible(observer)
             check(first is not None and second is not None and first.name == second.name == "Sync Test From SQL",

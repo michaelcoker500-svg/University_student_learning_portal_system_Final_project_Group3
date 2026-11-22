@@ -69,7 +69,7 @@ class Access:
                        nullif(concat_ws(' ',l.first_name,l.last_name),''), u.username) AS name
             FROM uslp.users u
             LEFT JOIN uslp.student_accounts a ON a.user_id=u.user_id
-            LEFT JOIN uslp.students s ON s.student_id=a.student_id
+            LEFT JOIN uslp_portal.students s ON s.student_id=a.student_id
             LEFT JOIN uslp.lecturers l ON l.user_id=u.user_id
             WHERE u.user_id=:uid AND u.is_active AND
                   (u.locked_until IS NULL OR u.locked_until <= now()) FOR SHARE OF u
@@ -147,7 +147,7 @@ def snapshot(conn, who):
             f"""
             SELECT s.student_id AS id,s.student_number AS number,d.full_name AS name,
                    s.programme_id,d.programme_name AS programme,s.status,s.updated_at::text AS version
-            FROM uslp.students s JOIN uslp.v_student_directory d USING(student_id)
+            FROM uslp_portal.students s JOIN uslp.v_student_directory d USING(student_id)
             WHERE {STUDENT_SCOPE} ORDER BY s.student_number
         """,
             **who.read_scope("students"),
@@ -170,7 +170,7 @@ def snapshot(conn, who):
             SELECT e.enrollment_id AS id,s.student_number,d.full_name AS student,c.course_title AS course,
                    c.course_code, concat(t.semester_name,' / ',y.session_name) AS term,
                    e.lessons_completed,c.total_lessons,e.status,e.offering_id
-            FROM uslp.enrollments e JOIN uslp.students s USING(student_id)
+            FROM uslp.enrollments e JOIN uslp_portal.students s USING(student_id)
             JOIN uslp.v_student_directory d USING(student_id) JOIN uslp.course_offerings o USING(offering_id)
             JOIN uslp.courses c USING(course_id) JOIN uslp.semesters t USING(semester_id)
             JOIN uslp.academic_sessions y USING(academic_session_id)
@@ -238,7 +238,7 @@ def snapshot(conn, who):
 def add_student(conn, who, number, name, programme):
     return one(
         conn,
-        """INSERT INTO uslp.students(student_number,full_name,programme_id)
+        """INSERT INTO uslp_portal.students(student_number,full_name,programme_id)
         VALUES (:number,:name,:programme) RETURNING student_id AS id""",
         number=label(number, 40),
         name=label(name, 240),
@@ -249,7 +249,7 @@ def add_student(conn, who, number, name, programme):
 def edit_student(conn, who, id, name, programme, version):
     return one(
         conn,
-        """UPDATE uslp.students SET full_name=:name,programme_id=:programme
+        """UPDATE uslp_portal.students SET full_name=:name,programme_id=:programme
         WHERE student_id=:id AND updated_at::text=:version RETURNING student_id AS id""",
         id=positive(id),
         name=label(name, 240),
@@ -261,7 +261,7 @@ def edit_student(conn, who, id, name, programme, version):
 def deactivate_student(conn, who, id):
     return one(
         conn,
-        "UPDATE uslp.students SET status='inactive' WHERE student_id=:id "
+        "UPDATE uslp_portal.students SET status='inactive' WHERE student_id=:id "
         "AND status='active' RETURNING student_id AS id",
         id=positive(id),
     )
@@ -270,7 +270,7 @@ def deactivate_student(conn, who, id):
 def delete_student(conn, who, id):
     id = positive(id)
     # Lock the student first so a concurrent foreign-key insert cannot slip through.
-    one(conn, "SELECT student_id FROM uslp.students WHERE student_id=:id FOR UPDATE", id=id)
+    one(conn, "SELECT student_id FROM uslp_portal.students WHERE student_id=:id FOR UPDATE", id=id)
     linked = conn.scalar(text("""
         SELECT EXISTS (SELECT 1 FROM uslp.student_accounts WHERE student_id=:id)
             OR EXISTS (SELECT 1 FROM uslp.enrollments WHERE student_id=:id)
@@ -280,7 +280,7 @@ def delete_student(conn, who, id):
                           "Use Deactivate to keep those records.", 409)
     # Both operations and their audit entries commit or roll back together.
     conn.execute(text("DELETE FROM uslp.class_list_entries WHERE student_id=:id"), {"id": id})
-    return one(conn, "DELETE FROM uslp.students WHERE student_id=:id RETURNING student_id AS id", id=id)
+    return one(conn, "DELETE FROM uslp_portal.students WHERE student_id=:id RETURNING student_id AS id", id=id)
 
 
 def course_values(code, title, department, credits, lessons):
