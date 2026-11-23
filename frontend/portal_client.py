@@ -43,8 +43,14 @@ class Student(Record):
     status: str
     version: str
 
+    gender: str | None = None
+
+    @classmethod
+    def from_row(cls, row):
+        return super().from_row({"gender": None, **row})
+
     def cells(self):
-        return [self.number, self.name, self.programme, self.status.title()]
+        return [self.number, self.name, self.cell(self.gender), self.programme, self.status.title()]
 
 
 @dataclass

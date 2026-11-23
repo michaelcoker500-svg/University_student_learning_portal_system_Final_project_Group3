@@ -145,7 +145,7 @@ def snapshot(conn, who):
         students = rows(
             conn,
             f"""
-            SELECT s.student_id AS id,s.student_number AS number,d.full_name AS name,
+            SELECT s.student_id AS id,s.student_number AS number,d.full_name AS name,d.gender,
                    s.programme_id,d.programme_name AS programme,s.status,s.updated_at::text AS version
             FROM uslp_portal.students s JOIN uslp.v_student_directory d USING(student_id)
             WHERE {STUDENT_SCOPE} ORDER BY s.student_number

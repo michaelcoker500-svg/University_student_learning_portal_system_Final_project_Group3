@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .portal_client import DEFAULT_PROFILE, SAVED_PROFILE, Portal, PortalError
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QPointF, QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -36,6 +36,32 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+def cap_badge(size):
+    """Draw the portal cap on its own backing at double resolution."""
+    image = QPixmap(size * 2, size * 2)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.scale(size * 2 / 64, size * 2 / 64)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("white"))
+    painter.drawRoundedRect(0, 0, 64, 64, 14, 14)
+    painter.setBrush(QColor("#2874A6"))
+    painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in
+                                  [(18, 32), (32, 39), (47, 32), (47, 40), (32, 47), (18, 40)]]))
+    painter.setBrush(QColor("#17365D"))
+    painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in
+                                  [(7, 28), (32, 16), (57, 28), (32, 40)]]))
+    painter.drawRoundedRect(53, 28, 3, 15, 1, 1)
+    painter.end()
+    image.setDevicePixelRatio(2)
+    label = QLabel()
+    label.setPixmap(image)
+    label.setFixedSize(size, size)
+    label.setAccessibleName("University Student Learning Portal logo")
+    return label
 
 
 class LoginPage(QWidget):
@@ -173,7 +199,7 @@ class LoginPage(QWidget):
         branding_layout = QVBoxLayout(branding_panel)
         branding_layout.setContentsMargins(45, 50, 45, 45)
 
-        logo = QLabel("🎓")
+        logo = cap_badge(64)
         logo.setObjectName("logo")
 
         university_name = QLabel("UNIVERSITY\nSTUDENT\nLEARNING PORTAL")
@@ -234,7 +260,7 @@ class LoginPage(QWidget):
                 padding: 13px;
             }
 
-            #inputField:focus {
+            #inputField:hover, #inputField:focus {
                 border: 1px solid #2874A6;
             }
 
@@ -317,7 +343,7 @@ class RecordForm(QDialog):
 
 
 HEADERS = {
-    "students": ["Student ID", "Full name", "Programme", "Status"],
+    "students": ["Student ID", "Full name", "Gender", "Programme", "Status"],
     "courses": ["Code", "Course", "Department", "Credits", "Lessons"],
     "enrollments": ["Enrolment", "Student", "Course", "Semester", "Lessons", "Progress", "Status"],
 }
@@ -412,9 +438,13 @@ class DashboardPage(QWidget):
         sidebar.setFixedWidth(205)
         nav = QVBoxLayout(sidebar)
         nav.setContentsMargins(18, 25, 18, 20)
-        logo = QLabel("🎓 USLP")
+        brand = QHBoxLayout()
+        brand.addWidget(cap_badge(36))
+        logo = QLabel("USLP")
         logo.setObjectName("sidebarLogo")
-        nav.addWidget(logo)
+        brand.addWidget(logo)
+        brand.addStretch()
+        nav.addLayout(brand)
         nav.addSpacing(20)
         for i, title in enumerate(self.names):
             button = QPushButton(title)
@@ -548,8 +578,13 @@ class DashboardPage(QWidget):
         layout = QVBoxLayout(page)
         search = QLineEdit()
         search.setPlaceholderText("Search " + title.lower() + "…")
+        search.setClearButtonEnabled(True)
+        search.setAccessibleName("Search " + title.lower())
         layout.addWidget(search)
         table = QTableWidget(0, len(HEADERS[key]))
+        table.setMouseTracking(True)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setHorizontalHeaderLabels(HEADERS[key])
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table.horizontalHeader().setStretchLastSection(True)
@@ -593,6 +628,7 @@ class DashboardPage(QWidget):
             for i, record in enumerate(records.values()):
                 for j, value in enumerate(record.cells()):
                     item = QTableWidgetItem(value)
+                    item.setToolTip(value)
                     if j == 0:
                         item.setData(Qt.ItemDataRole.UserRole, record.id)
                     table.setItem(i, j, item)
@@ -853,6 +889,9 @@ class DashboardPage(QWidget):
                 padding: 13px;
                 border-radius: 5px;
             }
+
+            QPushButton#menuButton[active="false"]:hover { background-color: #2874A6; }
+            #logoutButton:hover { border: 1px solid white; }
 
             #logoutButton {
                 background-color: #A93232;
@@ -1130,6 +1169,12 @@ def main():
     mode.add_argument("--demo", action="store_true", help="open with disposable in-memory data")
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
+    app.setStyleSheet("""
+        QPushButton:enabled:hover, QCheckBox:enabled:hover, QComboBox:enabled:hover,
+        QSpinBox:enabled:hover, QLineEdit:enabled:hover { color: #17365D; background: #EAF0F6; }
+        QTableWidget::item:hover:!selected, QListWidget::item:hover:!selected,
+        QHeaderView::section:hover, QMenu::item:selected { background: #EAF0F6; color: #17365D; }
+    """)
     app.setFont(QFont("Segoe UI", 10))
     error = None
     if args.demo:
