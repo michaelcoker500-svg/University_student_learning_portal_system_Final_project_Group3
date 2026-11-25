@@ -112,6 +112,8 @@ DESIGN_STYLES = """
     #cardTitle { color: #667085; font-size: 9pt; }
     #cardValue { color: #17365D; font-size: 24pt; font-weight: 700; }
     #panelHeading { color: #17365D; font-size: 12pt; font-weight: 700; }
+    #panelDescription { color: #667085; font-size: 9pt; }
+    #noticeSummary { color: #17365D; font-size: 13pt; font-weight: 700; }
     #quickButton { background: #F0F5FA; color: #17365D; border-color: #D9E0E8; }
     #quickButton:hover { background: #2874A6; color: #FFFFFF; }
     #activityList { background: #F8FAFC; border: 1px solid #E3E8EF; border-radius: 7px; padding: 6px; }
@@ -438,6 +440,55 @@ class SnapshotTask(QRunnable):
         self.signals.finished.emit(self.revision, outcome)
 
 
+class EnrollmentChart(QWidget):
+    """Small dependency-free chart of the current enrolment status totals."""
+
+    COLORS = (QColor("#2874A6"), QColor("#34866A"), QColor("#D28A36"))
+    LABELS = ("In progress", "Completed", "Withdrawn")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.counts = [0, 0, 0]
+        self.setMinimumHeight(155)
+        self.setAccessibleName("Enrolment status chart")
+
+    def set_records(self, records):
+        totals = {"enrolled": 0, "active": 0, "completed": 0, "withdrawn": 0}
+        for record in records:
+            status = record.status.casefold()
+            if status in totals:
+                totals[status] += 1
+        self.counts = [totals["enrolled"] + totals["active"], totals["completed"], totals["withdrawn"]]
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        label_width = 104
+        value_width = 30
+        bar_x = label_width
+        bar_width = max(20, self.width() - label_width - value_width - 12)
+        maximum = max(self.counts, default=0)
+        row_height = 43
+        for index, label in enumerate(self.LABELS):
+            y = 8 + index * row_height
+            painter.setPen(QColor("#52677F"))
+            painter.drawText(0, y + 19, label)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#EDF1F6"))
+            painter.drawRoundedRect(bar_x, y + 4, bar_width, 14, 7, 7)
+            amount = self.counts[index]
+            if amount and maximum:
+                painter.setBrush(self.COLORS[index])
+                painter.drawRoundedRect(bar_x, y + 4, max(7, int(bar_width * amount / maximum)), 14, 7, 7)
+            painter.setPen(QColor("#243247"))
+            painter.drawText(bar_x + bar_width + 8, y + 17, str(amount))
+        if maximum == 0:
+            painter.setPen(QColor("#667085"))
+            painter.drawText(bar_x, 8 + len(self.LABELS) * row_height + 2, "No enrolment data yet")
+        painter.end()
+
+
 class DashboardPage(QWidget):
     logout_requested = pyqtSignal()
     access_changed = pyqtSignal()
@@ -460,6 +511,7 @@ class DashboardPage(QWidget):
         ]
         self.revision = 0
         self.pending = None
+        self.pending_action = None
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(4000)
         self.poll_timer.timeout.connect(self.poll)
@@ -607,9 +659,39 @@ class DashboardPage(QWidget):
             buttons.addWidget(btn)
         refresh = PortalButton("Refresh overview", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
         refresh.setObjectName("quickButton")
-        refresh.clicked.connect(self.refresh)
+        refresh.clicked.connect(self.refresh_async)
         buttons.addWidget(refresh)
         lay.addWidget(actions)
+
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(14)
+        chart_card = PortalCard("panelCard")
+        chart_heading = QLabel("Enrolment overview")
+        chart_heading.setObjectName("panelHeading")
+        chart_card.content_layout.addWidget(chart_heading)
+        chart_note = QLabel("Current records by enrolment status")
+        chart_note.setObjectName("panelDescription")
+        chart_card.content_layout.addWidget(chart_note)
+        self.enrollment_chart = EnrollmentChart()
+        chart_card.content_layout.addWidget(self.enrollment_chart)
+        summary_row.addWidget(chart_card, 2)
+
+        notice_card = PortalCard("panelCard")
+        notice_heading = QLabel("Notifications")
+        notice_heading.setObjectName("panelHeading")
+        notice_card.content_layout.addWidget(notice_heading)
+        self.notice_summary = QLabel()
+        self.notice_summary.setObjectName("noticeSummary")
+        self.notice_summary.setWordWrap(True)
+        notice_card.content_layout.addWidget(self.notice_summary)
+        notice_detail = QLabel("The current API snapshot does not include server notifications.")
+        notice_detail.setObjectName("panelDescription")
+        notice_detail.setWordWrap(True)
+        notice_card.content_layout.addWidget(notice_detail)
+        notice_card.content_layout.addStretch()
+        summary_row.addWidget(notice_card, 1)
+        lay.addLayout(summary_row)
+
         activity = PortalCard("panelCard")
         activity_lay = activity.content_layout
         label = QLabel("Recent activity this session")
@@ -672,7 +754,7 @@ class DashboardPage(QWidget):
                 out.addWidget(academic)
         out.addStretch()
         refresh = PortalButton("Refresh", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
-        refresh.clicked.connect(self.refresh)
+        refresh.clicked.connect(self.refresh_async)
         out.addWidget(refresh)
         layout.addLayout(out)
         return page
@@ -707,6 +789,14 @@ class DashboardPage(QWidget):
         ]
         for widget, value in zip(self.stats, totals):
             widget.setText(str(value))
+        enrollments = list(self.portal.enrollments.values())
+        self.enrollment_chart.set_records(enrollments)
+        in_progress = sum(e.status.casefold() in {"enrolled", "active"} for e in enrollments)
+        completed = sum(e.status.casefold() == "completed" for e in enrollments)
+        self.notice_summary.setText(
+            f"{in_progress} in progress  ·  {completed} completed"
+            if enrollments else "No enrolment notices in the current snapshot."
+        )
 
     def filter_table(self, key, value):
         table = self.tables[key]
@@ -724,13 +814,19 @@ class DashboardPage(QWidget):
             button.style().polish(button)
 
     def open_page(self, index):
-        if self.refresh():
-            self.show_page(index)
+        self.show_page(index)
+        if not self.portal.preview:
+            self.refresh_async()
 
     def quick_action(self, page, action):
-        if self.refresh():
-            self.show_page(page)
+        self.show_page(page)
+        if self.pending_action is not None:
+            return
+        if self.portal.preview:
             self.perform(action)
+        else:
+            self.pending_action = action
+            self.refresh_async()
 
     def stop_sync(self):
         self.poll_timer.stop()
@@ -743,6 +839,19 @@ class DashboardPage(QWidget):
     def poll(self):
         if self.pending is not None or not self.isVisible() or QApplication.activeModalWidget() is not None:
             return
+        self.start_snapshot_task()
+
+    def refresh_async(self):
+        """Request a current snapshot without blocking page navigation."""
+        if self.portal.preview:
+            self.refresh()
+            return
+        if self.pending is None:
+            self.sync_label.setText("Refreshing · showing last update")
+            self.start_snapshot_task()
+
+    def start_snapshot_task(self):
+        self.revision += 1
         self.pending = SnapshotTask(self.portal, self.revision)
         self.pending.signals.finished.connect(self.poll_finished)
         QThreadPool.globalInstance().start(self.pending)
@@ -754,7 +863,9 @@ class DashboardPage(QWidget):
         if revision != self.revision or not self.poll_timer.isActive() or QApplication.activeModalWidget() is not None:
             return
         if isinstance(outcome, PortalError):
-            if outcome.status in (401, 403):
+            action_requested = self.pending_action is not None
+            self.pending_action = None
+            if outcome.status in (401, 403) or action_requested:
                 self.handle_error(outcome)
             else:
                 self.sync_label.setText("Reconnecting · showing last update")
@@ -762,9 +873,12 @@ class DashboardPage(QWidget):
         try:
             changed = self.portal.apply_snapshot(outcome)
         except PortalError as error:
+            self.pending_action = None
             self.sync_label.setText(str(error))
             return
-        self.show_snapshot(changed)
+        if self.show_snapshot(changed) and self.pending_action is not None:
+            action, self.pending_action = self.pending_action, None
+            self.perform(action)
 
     def show_snapshot(self, changed):
         if self.user != self.portal.user or self.initial_actions != self.portal.actions:
