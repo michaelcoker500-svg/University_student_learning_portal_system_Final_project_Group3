@@ -213,6 +213,10 @@ class Portal:
     def refresh(self):
         return self.apply_snapshot(self.request("snapshot"))
 
+    def audit_log(self, limit=50, offset=0):
+        """Read a staff-authorized page from the persistent server audit log."""
+        return self.request("audit_log", limit=limit, offset=offset)
+
     def logout(self):
         try:
             if self.token:

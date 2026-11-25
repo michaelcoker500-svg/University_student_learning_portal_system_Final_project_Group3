@@ -235,6 +235,35 @@ def snapshot(conn, who):
     }
 
 
+def audit_log(conn, who, limit=50, offset=0):
+    """Return a page of committed database audit events to staff accounts."""
+    if not who.staff:
+        raise PortalError("Your account does not have permission to view the audit log.", 403)
+    if type(limit) is not int or not 1 <= limit <= 200:
+        raise PortalError("Audit page size must be between 1 and 200.")
+    if type(offset) is not int or offset < 0:
+        raise PortalError("Audit page offset must be zero or greater.")
+
+    total = conn.execute(text("SELECT count(*) FROM uslp.audit_logs")).scalar_one()
+    entries = rows(
+        conn,
+        """
+        SELECT a.audit_id AS id, a.occurred_at::text AS occurred_at,
+               a.actor_user_id, coalesce(u.username, '') AS actor_username,
+               coalesce(u.display_name, u.username, a.database_user) AS actor_name,
+               a.database_user, a.table_name, a.record_key, a.operation,
+               a.old_data, a.new_data
+        FROM uslp.audit_logs a
+        LEFT JOIN uslp.users u ON u.user_id=a.actor_user_id
+        ORDER BY a.occurred_at DESC, a.audit_id DESC
+        LIMIT :limit OFFSET :offset
+        """,
+        limit=limit,
+        offset=offset,
+    )
+    return {"entries": entries, "total": total, "limit": limit, "offset": offset}
+
+
 def add_student(conn, who, number, name, programme):
     return one(
         conn,

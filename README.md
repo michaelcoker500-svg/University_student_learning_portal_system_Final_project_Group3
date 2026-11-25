@@ -18,7 +18,7 @@ GROUP BY class_label, semester_label
 ORDER BY class_label, semester_label;
 ```
 
-The original source shows BSEM 1101, Semester 3, 45 entries. Keep the exact database name from the first query. Back up that database before the first setup. An existing installation goes straight to setup. Setup verifies the source list by its fingerprint, applies the supplied 07 and 08 updates when needed, and grants the service account access. Counts can change as the team manages students.
+The original source shows BSEM 1101, Semester 3, 45 entries. Keep the exact database name from the first query. Back up that database before the first setup. An existing installation goes straight to setup. Setup verifies the source list by its fingerprint, applies the supplied 07, 08 and 09 updates when needed, and grants the service account access. Update 09 creates the writable `uslp_portal.students` view expected by the desktop service. Counts can change as the team manages students.
 
 On the backend PC, using Python 3.12:
 
@@ -108,6 +108,7 @@ The service accepts JSON with Content-Type application/json. After login, send t
 | GET /health | None | status and api_version after a database read |
 | POST /login | username, password | token |
 | POST /snapshot | {} | user, actions, students, courses, enrollments and lookups |
+| POST /audit_log | limit, offset | Staff-only page of persistent audit entries and total count |
 | POST /add_student | number, name, programme | id |
 | POST /edit_student | id, name, programme, version | id |
 | POST /deactivate_student | id | id |
@@ -115,6 +116,10 @@ The service accepts JSON with Content-Type application/json. After login, send t
 | POST /logout | {} | {} |
 
 `number` is the official student ID, a string. `id` is the database's internal integer. `programme` in write requests is an integer from `lookups.programmes`. Each student in a snapshot supplies `id, number, name, programme_id, programme, status, version`. Pass the last-read version back unchanged on edit. Search filters the current role-scoped snapshot in the GUI. Existing code also supports courses, offerings, academic periods, enrolments and lesson progress.
+
+The audit endpoint returns at most 200 records per request, newest first, with `id`, `occurred_at`, `actor_user_id`, `actor_username`, `actor_name`, `database_user`, `table_name`, `record_key`, `operation`, `old_data` and `new_data`. Staff accounts can page with `limit` (default 50) and `offset` (default 0). Other roles receive HTTP 403. The dashboard audit view reads this endpoint, so committed records remain available after sign-out and across sessions.
+
+On an already configured backend host, rerun `python -m backend.setup_portal` once after updating the project. Setup grants the runtime service account read access to the existing audit table; no table or migration change is needed.
 
 A failed action returns an error string and HTTP status. Handle 400 for invalid input, 401 for a missing or expired session, 403 for permissions, 409 for conflicting data, and 503 for service or database availability. After an interrupted write, refresh and search before retrying.
 

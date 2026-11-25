@@ -1,6 +1,7 @@
 """University Student Learning Portal desktop GUI. Connect to the team API or use an offline preview."""
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -384,6 +385,224 @@ class RecordForm(QDialog):
         return result
 
 
+class StudentProfileDialog(QDialog):
+    """Read-only profile assembled only from the authenticated snapshot."""
+
+    def __init__(self, parent, student, enrollments):
+        super().__init__(parent)
+        self.setWindowTitle("Student profile")
+        self.setMinimumWidth(480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 18)
+        layout.setSpacing(14)
+        heading = QLabel(student.name)
+        heading.setObjectName("welcomeHeading")
+        layout.addWidget(heading)
+        details = QFormLayout()
+        details.setHorizontalSpacing(18)
+        details.setVerticalSpacing(10)
+        for label, value in (
+            ("Official student ID", student.number),
+            ("Programme", student.programme),
+            ("Gender", student.cell(student.gender)),
+            ("Status", student.status.title()),
+        ):
+            details.addRow(label, QLabel(value))
+        layout.addLayout(details)
+        section = QLabel("Enrolments in the current snapshot")
+        section.setObjectName("panelHeading")
+        layout.addWidget(section)
+        enrolment_list = QListWidget()
+        matching = [e for e in enrollments if e.student_number == student.number]
+        enrolment_list.addItems(
+            [f"{e.course_code} · {e.course}  —  {e.term}  ({e.status.title()})" for e in matching]
+            or ["No enrolments in the current snapshot."]
+        )
+        layout.addWidget(enrolment_list)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
+class AuditLogSignals(QObject):
+    finished = pyqtSignal(object)
+
+
+class AuditLogTask(QRunnable):
+    """Load one persistent audit page away from the GUI thread."""
+
+    def __init__(self, portal, limit, offset):
+        super().__init__()
+        self.portal = portal
+        self.limit = limit
+        self.offset = offset
+        self.signals = AuditLogSignals()
+
+    def run(self):
+        try:
+            result = self.portal.audit_log(limit=self.limit, offset=self.offset)
+        except PortalError as error:
+            result = error
+        self.signals.finished.emit(result)
+
+
+class AuditLogDialog(QDialog):
+    """Paginated database audit history, with session-only preview data."""
+
+    PAGE_SIZE = 50
+
+    def __init__(self, parent, portal, session_entries):
+        super().__init__(parent)
+        self.portal = portal
+        self.session_entries = session_entries
+        self.offset = 0
+        self.total = 0
+        self.task = None
+        self.setWindowTitle("Audit log" if not portal.preview else "Preview audit log")
+        self.resize(1120, 580)
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "Persistent server history, newest first. This log includes the account, time, operation, "
+            "record key and before/after values."
+            if not portal.preview else
+            "Preview actions exist only in memory and disappear when the preview closes."
+        )
+        note.setObjectName("panelDescription")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Filter the records on this page…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.filter_rows)
+        layout.addWidget(self.search)
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["Time", "Account", "Table", "Action", "Record key", "Before", "After"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().hide()
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        layout.addWidget(self.table)
+        self.status = QLabel()
+        self.status.setObjectName("panelDescription")
+        layout.addWidget(self.status)
+        footer = QHBoxLayout()
+        self.previous_button = PortalButton("Previous", "secondary")
+        self.previous_button.clicked.connect(self.previous_page)
+        footer.addWidget(self.previous_button)
+        self.next_button = PortalButton("Next", "secondary")
+        self.next_button.clicked.connect(self.next_page)
+        footer.addWidget(self.next_button)
+        footer.addStretch()
+        self.refresh_button = PortalButton("Refresh", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
+        self.refresh_button.clicked.connect(self.load_page)
+        footer.addWidget(self.refresh_button)
+        close = PortalButton("Close", "secondary")
+        close.clicked.connect(self.accept)
+        footer.addWidget(close)
+        layout.addLayout(footer)
+        self.load_page()
+
+    @staticmethod
+    def format_value(value):
+        if value is None:
+            return "—"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        return str(value)
+
+    def load_page(self):
+        if self.portal.preview:
+            self.total = len(self.session_entries)
+            start = self.offset
+            self.show_entries([
+                {
+                    "occurred_at": entry["time"],
+                    "actor_name": entry["account"],
+                    "actor_username": "",
+                    "table_name": entry["record"].split(" · ", 1)[0].casefold() + "s",
+                    "operation": entry["action"],
+                    "record_key": entry["record"],
+                    "old_data": entry["details"],
+                    "new_data": None,
+                }
+                for entry in self.session_entries[start:start + self.PAGE_SIZE]
+            ])
+            return
+        self.status.setText("Loading audit history…")
+        self.refresh_button.setEnabled(False)
+        self.previous_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+        self.task = AuditLogTask(self.portal, self.PAGE_SIZE, self.offset)
+        self.task.signals.finished.connect(self.page_loaded)
+        QThreadPool.globalInstance().start(self.task)
+
+    @pyqtSlot(object)
+    def page_loaded(self, result):
+        self.refresh_button.setEnabled(True)
+        if isinstance(result, PortalError):
+            self.status.setText(str(result))
+            self.previous_button.setEnabled(self.offset > 0)
+            self.next_button.setEnabled(False)
+            return
+        self.total = result["total"]
+        self.show_entries(result["entries"])
+
+    def show_entries(self, entries):
+        self.table.setRowCount(len(entries) or 1)
+        if not entries:
+            self.table.setItem(0, 0, QTableWidgetItem("No audit records on this page."))
+            self.table.setSpan(0, 0, 1, 7)
+        for row, entry in enumerate(entries):
+            actor = entry.get("actor_name") or entry.get("database_user") or "Unknown account"
+            username = entry.get("actor_username")
+            account = f"{actor} ({username})" if username else actor
+            values = (
+                self.format_value(entry.get("occurred_at")),
+                account,
+                self.format_value(entry.get("table_name")),
+                self.format_value(entry.get("operation")),
+                self.format_value(entry.get("record_key")),
+                self.format_value(entry.get("old_data")),
+                self.format_value(entry.get("new_data")),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                self.table.setItem(row, column, item)
+        self.filter_rows(self.search.text())
+        if entries:
+            first = self.offset + 1
+            last = min(self.offset + len(entries), self.total)
+            self.status.setText(f"Showing {first}–{last} of {self.total} audit records")
+        else:
+            self.status.setText(f"No audit records on this page · {self.total} total")
+        self.previous_button.setEnabled(self.offset > 0)
+        self.next_button.setEnabled(self.offset + self.PAGE_SIZE < self.total)
+        self.table.resizeColumnsToContents()
+
+    def filter_rows(self, query):
+        query = query.casefold().strip()
+        for row in range(self.table.rowCount()):
+            values = [self.table.item(row, col).text() for col in range(self.table.columnCount())
+                      if self.table.item(row, col)]
+            self.table.setRowHidden(row, query not in " ".join(values).casefold())
+
+    def previous_page(self):
+        self.offset = max(0, self.offset - self.PAGE_SIZE)
+        self.load_page()
+
+    def next_page(self):
+        if self.offset + self.PAGE_SIZE < self.total:
+            self.offset += self.PAGE_SIZE
+            self.load_page()
+
+
 HEADERS = {
     "students": ["Student ID", "Full name", "Gender", "Programme", "Status"],
     "courses": ["Code", "Course", "Department", "Credits", "Lessons"],
@@ -395,6 +614,7 @@ BUTTONS = {
         ("add_student", "Add student"),
         ("edit_student", "Edit student"),
         ("deactivate_student", "Deactivate"),
+        ("reactivate_student", "Reactivate"),
         ("delete_student", "Delete"),
     ],
     "courses": [
@@ -499,7 +719,8 @@ class DashboardPage(QWidget):
         self.user = portal.user.copy()
         self.initial_actions = portal.actions.copy()
         self.activities = []
-        self.tables, self.searches, self.quick_buttons = {}, {}, {}
+        self.tables, self.searches, self.status_filters, self.quick_buttons = {}, {}, {}, {}
+        self.audit_events = []
         self.menu_buttons = []
         staff = self.user["staff"]
         self.lecturer = "Lecturer" in self.user["roles"]
@@ -661,6 +882,11 @@ class DashboardPage(QWidget):
         refresh.setObjectName("quickButton")
         refresh.clicked.connect(self.refresh_async)
         buttons.addWidget(refresh)
+        if staff:
+            audit = PortalButton("Audit log", "secondary", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+            audit.setObjectName("quickButton")
+            audit.clicked.connect(self.open_audit_log)
+            buttons.addWidget(audit)
         lay.addWidget(actions)
 
         summary_row = QHBoxLayout()
@@ -713,11 +939,21 @@ class DashboardPage(QWidget):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 18, 0, 0)
         layout.setSpacing(14)
+        search_bar = QHBoxLayout()
         search = QLineEdit()
         search.setPlaceholderText("Search " + title.lower() + "…")
         search.setClearButtonEnabled(True)
         search.setAccessibleName("Search " + title.lower())
-        layout.addWidget(search)
+        search_bar.addWidget(search, 1)
+        status_filter = None
+        if key == "students":
+            status_filter = QComboBox()
+            status_filter.setAccessibleName("Filter students by status")
+            status_filter.addItem("All statuses", "all")
+            status_filter.addItem("Active", "active")
+            status_filter.addItem("Inactive", "inactive")
+            search_bar.addWidget(status_filter)
+        layout.addLayout(search_bar)
         table = QTableWidget(0, len(HEADERS[key]))
         table.setMouseTracking(True)
         table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -735,6 +971,10 @@ class DashboardPage(QWidget):
         table.setCornerButtonEnabled(False)
         layout.addWidget(table)
         self.tables[key], self.searches[key] = table, search
+        if status_filter is not None:
+            self.status_filters[key] = status_filter
+            status_filter.currentIndexChanged.connect(lambda _index: self.filter_table(key, search.text()))
+            table.cellDoubleClicked.connect(lambda _row, _column: self.view_selected_student())
         search.textChanged.connect(lambda value: self.filter_table(key, value))
         out = QHBoxLayout()
         for action, text in BUTTONS[key]:
@@ -743,6 +983,14 @@ class DashboardPage(QWidget):
                 btn = PortalButton(text, "danger" if destructive else "secondary")
                 btn.clicked.connect(lambda checked=False, a=action: self.perform(a))
                 out.addWidget(btn)
+        if key == "students":
+            view = PortalButton("View profile", "secondary", QStyle.StandardPixmap.SP_FileDialogInfoView)
+            view.clicked.connect(self.view_selected_student)
+            out.addWidget(view)
+            if self.user["staff"]:
+                audit = PortalButton("Audit log", "secondary", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+                audit.clicked.connect(self.open_audit_log)
+                out.addWidget(audit)
         if key == "courses":
             options = [(a, t) for a, t in ACADEMIC if a in self.portal.actions]
             if options:
@@ -803,7 +1051,68 @@ class DashboardPage(QWidget):
         query = value.casefold().strip()
         for i in range(table.rowCount()):
             cells = [table.item(i, j).text() for j in range(table.columnCount()) if table.item(i, j)]
-            table.setRowHidden(i, query not in " ".join(cells).casefold())
+            matches_query = query in " ".join(cells).casefold()
+            status_filter = self.status_filters.get(key)
+            matches_status = (
+                status_filter is None
+                or status_filter.currentData() == "all"
+                or (table.item(i, 4) and table.item(i, 4).text().casefold() == status_filter.currentData())
+            )
+            table.setRowHidden(i, not (matches_query and matches_status))
+
+    def view_selected_student(self):
+        try:
+            student = self.selected("students")
+        except PortalError as error:
+            self.handle_error(error)
+            return
+        StudentProfileDialog(self, student, list(self.portal.enrollments.values())).exec()
+
+    def open_audit_log(self):
+        if self.user["staff"]:
+            AuditLogDialog(self, self.portal, self.audit_events).exec()
+
+    def make_audit_entry(self, action, fields, result, happened_at):
+        if action == "complete_lesson":
+            entity_key = "enrollments"
+        else:
+            entity_key = next(
+                (key for token, key in (("student", "students"), ("course", "courses"),
+                                        ("enrollment", "enrollments")) if token in action),
+                None,
+            )
+        record_id = result.get("id")
+        record = getattr(self.portal, entity_key, {}).get(fields.get("id")) if entity_key else None
+        entity_names = {"students": "Student", "courses": "Course", "enrollments": "Enrolment"}
+        record_names = {"students": "number", "courses": "code", "enrollments": "id"}
+        if record is not None:
+            record_name = getattr(record, record_names[entity_key])
+            details = " · ".join(record.cells())
+            if action.startswith("edit_"):
+                changed_values = {key: value for key, value in fields.items()
+                                  if key not in {"id", "version", "expected"}}
+                details += " · Submitted changes: " + ", ".join(
+                    f"{key}: {value}" for key, value in changed_values.items()
+                )
+            elif action == "deactivate_student":
+                details += " · Status changed to inactive"
+            elif action == "reactivate_student":
+                details += " · Status changed to active"
+        else:
+            record_name = fields.get("number") or fields.get("code") or fields.get("name") or str(record_id)
+            safe_fields = {key: value for key, value in fields.items()
+                           if key not in {"version", "expected", "password"}}
+            details = ", ".join(f"{key}: {value}" for key, value in safe_fields.items())
+        roles = ", ".join(self.user.get("roles", [])) or "Unknown role"
+        username = self.user.get("username", "unknown account")
+        return {
+            "time": happened_at.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "account": f"{self.user.get('name', username)} ({username})",
+            "role": roles,
+            "action": TITLES.get(action, action.replace("_", " ").title()),
+            "record": f"{entity_names.get(entity_key, 'Academic record')} · {record_name} · #{record_id}",
+            "details": details,
+        }
 
     def show_page(self, index):
         self.pages.setCurrentIndex(index)
@@ -923,11 +1232,13 @@ class DashboardPage(QWidget):
             fields = self.action_fields(action)
             if fields is None:
                 return
+            happened_at = datetime.now().astimezone()
             self.revision += 1
             result = self.portal.request(action, **fields)
         except PortalError as error:
             self.handle_error(error)
             return
+        self.audit_events.insert(0, self.make_audit_entry(action, fields, result, happened_at))
         message = TITLES[action] + " · record " + str(result["id"])
         if action == "complete_lesson":
             message += f" · {result['lessons_completed']}/{result['total_lessons']} lessons"
@@ -966,6 +1277,8 @@ class DashboardPage(QWidget):
         if action == "complete_lesson":
             enrollment = self.selected("enrollments")
             return {"id": enrollment.id, "expected": enrollment.lessons_completed}
+        if action == "reactivate_student":
+            return {"id": self.selected("students").id}
         extra = {}
         if action in ("add_student", "edit_student"):
             s = self.selected("students") if action == "edit_student" else None

@@ -11,7 +11,7 @@ from threading import Lock
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from .portal_data import ACTIONS, Access, PortalError, snapshot
+from .portal_data import ACTIONS, Access, PortalError, audit_log, snapshot
 from .settings import make_engine, read_connection
 from .team_tls import server_identity
 from sqlalchemy import text
@@ -101,10 +101,10 @@ class PortalService:
             if operation == "logout":
                 del self.sessions[token]
                 return {}
-        if operation != "snapshot" and operation not in ACTIONS:
+        if operation not in {"snapshot", "audit_log"} and operation not in ACTIONS:
             raise PortalError("Unknown portal action.", 404)
         with self.engine.begin() as conn:
-            if operation == "snapshot":
+            if operation in {"snapshot", "audit_log"}:
                 # All lists in a response come from the same committed database snapshot.
                 conn.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             try:
@@ -115,6 +115,9 @@ class PortalService:
                 raise
             if operation == "snapshot":
                 return snapshot(conn, who)
+            if operation == "audit_log":
+                require_fields(audit_log, (conn, who), fields)
+                return audit_log(conn, who, **fields)
             _, function = ACTIONS[operation]
             if not who.allows(operation):
                 raise PortalError("Your account does not have permission for that action.", 403)

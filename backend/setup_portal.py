@@ -16,6 +16,7 @@ from .settings import CONFIG, DATABASE, DISPLAY_NAME, ROLE, USERNAME, read_conne
 
 MIGRATION = Path(__file__).parent / "database" / "07_desktop_integration.sql"
 ROSTER_MIGRATION = Path(__file__).parent / "database" / "08_student_roster.sql"
+PORTAL_VIEW_MIGRATION = Path(__file__).parent / "database" / "09_portal_write_view.sql"
 ROLES = ("Administrator", "Registrar", "Lecturer", "Student", "Super Administrator")
 
 
@@ -38,7 +39,7 @@ def grant_runtime(conn, config, create):
             "uslp.role_permissions, uslp.students, uslp.student_accounts, uslp.programmes, uslp.departments, "
             "uslp.courses, uslp.enrollments, uslp.semesters, uslp.academic_sessions, uslp.lecturers, "
             "uslp.course_offerings, uslp.teaching_assignments, uslp.class_sessions, uslp.attendance, "
-            "uslp.v_user_permissions, uslp.v_student_directory TO {}"
+            "uslp.v_user_permissions, uslp.v_student_directory, uslp.audit_logs TO {}"
         ),
         "GRANT UPDATE (failed_login_attempts, locked_until, last_login_at) ON uslp.users TO {}",
         "GRANT SELECT ON uslp.class_lists, uslp.class_list_entries TO {}",
@@ -46,8 +47,9 @@ def grant_runtime(conn, config, create):
         "GRANT INSERT, UPDATE, DELETE ON uslp.students, uslp.courses, uslp.enrollments TO {}",
         (
             "GRANT INSERT ON uslp.departments, uslp.academic_sessions, uslp.semesters, "
-            "uslp.course_offerings, uslp.teaching_assignments, uslp.audit_logs TO {}"
+            "uslp.course_offerings, uslp.teaching_assignments TO {}"
         ),
+        "GRANT INSERT ON uslp.audit_logs TO {}",
         # PostgreSQL's SELECT ... FOR SHARE in the starter's triggers needs an update privilege.
         "GRANT UPDATE (starts_on) ON uslp.academic_sessions TO {}",
         "GRANT UPDATE (starts_on) ON uslp.semesters TO {}",
@@ -131,6 +133,7 @@ def configure(owner, username, display, role, password, profile=None, path=None)
             if not installed:
                 conn.execute(MIGRATION.read_text(encoding="utf-8"))
             conn.execute(ROSTER_MIGRATION.read_text(encoding="utf-8"))
+            conn.execute(PORTAL_VIEW_MIGRATION.read_text(encoding="utf-8"))
             grant_runtime(conn, runtime, new_settings)
             match = conn.execute(
                 "SELECT display_name, is_active, ARRAY(SELECT r.role_name "
