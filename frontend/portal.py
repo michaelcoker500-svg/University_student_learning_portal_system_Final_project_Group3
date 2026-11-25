@@ -30,7 +30,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QStyle,
     QSpinBox,
     QStackedWidget,
     QTableWidget,
@@ -124,13 +123,11 @@ DESIGN_STYLES = """
 
 
 class PortalButton(QPushButton):
-    """Shared button with an optional platform icon and visual variant."""
+    """Shared button with a consistent visual variant."""
 
-    def __init__(self, text, variant="primary", icon=None, parent=None):
+    def __init__(self, text, variant="primary", parent=None):
         super().__init__(text, parent)
         self.setProperty("variant", variant)
-        if icon is not None:
-            self.setIcon(self.style().standardIcon(icon))
 
 
 class PortalCard(QFrame):
@@ -261,7 +258,7 @@ class LoginPage(QWidget):
         self.username_input.textChanged.connect(lambda: self.error_label.clear())
         self.password_input.textChanged.connect(lambda: self.error_label.clear())
 
-        sign_in_button = PortalButton("Sign In", icon=QStyle.StandardPixmap.SP_DialogApplyButton)
+        sign_in_button = PortalButton("Sign In")
         sign_in_button.setObjectName("signInButton")
         sign_in_button.clicked.connect(self.login)
 
@@ -271,8 +268,7 @@ class LoginPage(QWidget):
         self.connection_label = QLabel()
         self.connection_label.setWordWrap(True)
         self.show_connection()
-        choose = PortalButton("Choose team connection file", "secondary",
-                              QStyle.StandardPixmap.SP_DialogOpenButton)
+        choose = PortalButton("Choose team connection file", "secondary")
         choose.clicked.connect(self.choose_connection)
 
         login_layout.addWidget(heading)
@@ -499,7 +495,7 @@ class AuditLogDialog(QDialog):
         self.next_button.clicked.connect(self.next_page)
         footer.addWidget(self.next_button)
         footer.addStretch()
-        self.refresh_button = PortalButton("Refresh", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
+        self.refresh_button = PortalButton("Refresh", "secondary")
         self.refresh_button.clicked.connect(self.load_page)
         footer.addWidget(self.refresh_button)
         close = PortalButton("Close", "secondary")
@@ -760,14 +756,13 @@ class DashboardPage(QWidget):
         nav.addLayout(brand)
         nav.addSpacing(20)
         for i, title in enumerate(self.names):
-            button = PortalButton(title, "quiet", self._nav_icon(i))
+            button = PortalButton(title, "quiet")
             button.setObjectName("menuButton")
             button.clicked.connect(lambda checked=False, idx=i: self.open_page(idx))
             nav.addWidget(button)
             self.menu_buttons.append(button)
         nav.addStretch()
-        logout = PortalButton("Exit preview" if self.portal.preview else "Logout", "danger",
-                              QStyle.StandardPixmap.SP_DialogCloseButton)
+        logout = PortalButton("Exit preview" if self.portal.preview else "Logout", "danger")
         logout.setObjectName("logoutButton")
         logout.clicked.connect(self.logout_requested.emit)
         nav.addWidget(logout)
@@ -809,16 +804,6 @@ class DashboardPage(QWidget):
         main.addWidget(sidebar)
         main.addWidget(panel)
         self.show_page(0)
-
-    @staticmethod
-    def _nav_icon(index):
-        icons = (
-            QStyle.StandardPixmap.SP_ComputerIcon,
-            QStyle.StandardPixmap.SP_FileDialogInfoView,
-            QStyle.StandardPixmap.SP_DirIcon,
-            QStyle.StandardPixmap.SP_FileDialogDetailedView,
-        )
-        return icons[index] if index < len(icons) else QStyle.StandardPixmap.SP_FileIcon
 
     def dashboard(self):
         page = QFrame()
@@ -878,12 +863,12 @@ class DashboardPage(QWidget):
             btn.setObjectName("quickButton")
             btn.clicked.connect(lambda: self.open_page(3))
             buttons.addWidget(btn)
-        refresh = PortalButton("Refresh overview", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
+        refresh = PortalButton("Refresh overview", "secondary")
         refresh.setObjectName("quickButton")
         refresh.clicked.connect(self.refresh_async)
         buttons.addWidget(refresh)
         if staff:
-            audit = PortalButton("Audit log", "secondary", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+            audit = PortalButton("Audit log", "secondary")
             audit.setObjectName("quickButton")
             audit.clicked.connect(self.open_audit_log)
             buttons.addWidget(audit)
@@ -984,11 +969,11 @@ class DashboardPage(QWidget):
                 btn.clicked.connect(lambda checked=False, a=action: self.perform(a))
                 out.addWidget(btn)
         if key == "students":
-            view = PortalButton("View profile", "secondary", QStyle.StandardPixmap.SP_FileDialogInfoView)
+            view = PortalButton("View profile", "secondary")
             view.clicked.connect(self.view_selected_student)
             out.addWidget(view)
             if self.user["staff"]:
-                audit = PortalButton("Audit log", "secondary", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+                audit = PortalButton("Audit log", "secondary")
                 audit.clicked.connect(self.open_audit_log)
                 out.addWidget(audit)
         if key == "courses":
@@ -1001,7 +986,7 @@ class DashboardPage(QWidget):
                 academic.setMenu(menu)
                 out.addWidget(academic)
         out.addStretch()
-        refresh = PortalButton("Refresh", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
+        refresh = PortalButton("Refresh", "secondary")
         refresh.clicked.connect(self.refresh_async)
         out.addWidget(refresh)
         layout.addLayout(out)
