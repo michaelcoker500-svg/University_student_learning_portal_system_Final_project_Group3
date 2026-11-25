@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QStyle,
     QSpinBox,
     QStackedWidget,
     QTableWidget,
@@ -36,6 +37,108 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+DESIGN_STYLES = """
+    QWidget { color: #243247; font-family: 'Segoe UI'; font-size: 10pt; }
+    QMainWindow, QDialog { background: #F4F6F9; }
+    QLineEdit, QComboBox, QSpinBox {
+        background: #FFFFFF; border: 1px solid #D9E0E8; border-radius: 6px;
+        padding: 8px 10px; min-height: 20px; selection-background-color: #2874A6;
+    }
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 1px solid #2874A6; }
+    QComboBox::drop-down { border: 0; width: 26px; }
+    QPushButton {
+        background: #17365D; color: #FFFFFF; border: 1px solid #17365D;
+        border-radius: 6px; padding: 8px 13px; min-height: 20px; font-weight: 600;
+    }
+    QPushButton:hover { background: #2874A6; border-color: #2874A6; }
+    QPushButton:pressed { background: #102845; }
+    QPushButton:disabled { background: #E5EAF0; color: #98A2B3; border-color: #E5EAF0; }
+    QPushButton[variant="secondary"] { background: #FFFFFF; color: #17365D; border-color: #D9E0E8; }
+    QPushButton[variant="secondary"]:hover { background: #EAF0F6; }
+    QPushButton[variant="quiet"] { background: transparent; color: #FFFFFF; border-color: transparent; }
+    QPushButton[variant="danger"] { background: #A93232; border-color: #A93232; }
+    QPushButton[variant="danger"]:hover { background: #862626; border-color: #862626; }
+    QTableWidget {
+        background: #FFFFFF; alternate-background-color: #F8FAFC; color: #243247;
+        border: 1px solid #D9E0E8; border-radius: 8px; gridline-color: #EDF1F5;
+        selection-background-color: #E1ECF5; selection-color: #17365D;
+    }
+    QTableWidget::item { padding: 8px; border-bottom: 1px solid #EDF1F5; }
+    QHeaderView::section {
+        background: #EAF0F6; color: #17365D; padding: 10px; border: 0;
+        border-bottom: 1px solid #D9E0E8; font-weight: 700;
+    }
+    QDialogButtonBox QPushButton { min-width: 82px; }
+    QFormLayout QLabel { color: #344054; font-weight: 600; }
+    QScrollBar:vertical, QScrollBar:horizontal { background: #EDF1F6; border: 0; }
+    QScrollBar:vertical { width: 10px; margin: 0; }
+    QScrollBar:horizontal { height: 10px; margin: 0; }
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+        background: #C3CFDD; border-radius: 5px; min-height: 28px; min-width: 28px;
+    }
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: #2874A6; }
+    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+    #loginPanel { background: #FFFFFF; }
+    #brandingPanel, #sidebar { background: #17365D; }
+    #loginHeading { color: #17365D; font-size: 25pt; font-weight: 700; }
+    #brandName { color: #FFFFFF; font-size: 18pt; font-weight: 700; }
+    #welcomeText { color: #FFFFFF; font-size: 19pt; font-weight: 700; }
+    #inputField { background: #F8FAFC; }
+    #signInButton { padding: 12px; }
+    #errorLabel { color: #A93232; font-size: 9pt; }
+    #sidebarLogo { color: #FFFFFF; font-size: 16pt; font-weight: 700; letter-spacing: 1px; }
+    #menuButton {
+        background: transparent; color: #DCE6F0; border: 0; text-align: left;
+        padding: 11px 12px; border-radius: 7px; font-weight: 500;
+    }
+    #menuButton:hover { background: #244A70; color: #FFFFFF; }
+    QPushButton#menuButton[active="true"] {
+        background: #2874A6; color: #FFFFFF; border-left: 3px solid #FFFFFF; font-weight: 700;
+    }
+    #logoutButton { background: #A93232; border-color: #A93232; }
+    #contentArea, #dashboardPage, QScrollArea { background: #F4F6F9; border: 0; }
+    #pageHeading { color: #17365D; font-size: 19pt; font-weight: 700; }
+    QLabel#userName { color: #17365D; font-size: 10pt; font-weight: 700; }
+    QLabel#userRole { color: #667085; font-size: 9pt; }
+    #headerSeparator { background: #D9E0E8; border: 0; }
+    #welcomeHeading { color: #17365D; font-size: 18pt; font-weight: 700; }
+    #sectionHeading { color: #17365D; font-size: 16pt; font-weight: 700; }
+    #statCard, #panelCard {
+        background: #FFFFFF; border: 1px solid #E3E8EF; border-radius: 10px; padding: 12px;
+    }
+    #cardTitle { color: #667085; font-size: 9pt; }
+    #cardValue { color: #17365D; font-size: 24pt; font-weight: 700; }
+    #panelHeading { color: #17365D; font-size: 12pt; font-weight: 700; }
+    #quickButton { background: #F0F5FA; color: #17365D; border-color: #D9E0E8; }
+    #quickButton:hover { background: #2874A6; color: #FFFFFF; }
+    #activityList { background: #F8FAFC; border: 1px solid #E3E8EF; border-radius: 7px; padding: 6px; }
+    #activityList::item { color: #344054; padding: 7px; border-bottom: 1px solid #E8EDF2; }
+    #activityList::item:selected { background: #EAF0F6; color: #17365D; }
+"""
+
+
+class PortalButton(QPushButton):
+    """Shared button with an optional platform icon and visual variant."""
+
+    def __init__(self, text, variant="primary", icon=None, parent=None):
+        super().__init__(text, parent)
+        self.setProperty("variant", variant)
+        if icon is not None:
+            self.setIcon(self.style().standardIcon(icon))
+
+
+class PortalCard(QFrame):
+    """Reusable white surface used by dashboard cards and action panels."""
+
+    def __init__(self, object_name="panelCard", parent=None):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self.content_layout = QVBoxLayout(self)
+        self.content_layout.setContentsMargins(16, 14, 16, 14)
+        self.content_layout.setSpacing(10)
 
 
 def cap_badge(size):
@@ -71,7 +174,6 @@ class LoginPage(QWidget):
         super().__init__()
         self.portal = portal
         self.setup_ui()
-        self.apply_styles()
 
     def show_connection(self):
         endpoint = self.portal.endpoint
@@ -156,7 +258,7 @@ class LoginPage(QWidget):
         self.username_input.textChanged.connect(lambda: self.error_label.clear())
         self.password_input.textChanged.connect(lambda: self.error_label.clear())
 
-        sign_in_button = QPushButton("Sign In")
+        sign_in_button = PortalButton("Sign In", icon=QStyle.StandardPixmap.SP_DialogApplyButton)
         sign_in_button.setObjectName("signInButton")
         sign_in_button.clicked.connect(self.login)
 
@@ -166,7 +268,8 @@ class LoginPage(QWidget):
         self.connection_label = QLabel()
         self.connection_label.setWordWrap(True)
         self.show_connection()
-        choose = QPushButton("Choose team connection file")
+        choose = PortalButton("Choose team connection file", "secondary",
+                              QStyle.StandardPixmap.SP_DialogOpenButton)
         choose.clicked.connect(self.choose_connection)
 
         login_layout.addWidget(heading)
@@ -219,80 +322,17 @@ class LoginPage(QWidget):
         main_layout.addWidget(branding_panel, 42)
         main_layout.addWidget(login_panel, 42)
 
-    def apply_styles(self):
-
-        self.setStyleSheet("""
-
-            #loginPanel {
-                background-color: white;
-            }
-
-            #brandingPanel {
-                background-color: #17365D;
-            }
-
-            #logo {
-                font-size: 35px;
-            }
-
-            #loginHeading {
-                color: #17365D;
-                font-size: 31px;
-                font-weight: bold;
-            }
-
-            #brandName {
-                color: white;
-                font-size: 24px;
-                font-weight: bold;
-            }
-
-            #welcomeText {
-                color: white;
-                font-size: 25px;
-                font-weight: bold;
-            }
-
-            #inputField {
-                background-color: #F8FAFC;
-                border: 1px solid #D9E0E8;
-                border-radius: 6px;
-                padding: 13px;
-            }
-
-            #inputField:hover, #inputField:focus {
-                border: 1px solid #2874A6;
-            }
-
-            #signInButton {
-                background-color: #17365D;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 14px;
-                font-weight: bold;
-            }
-
-            #signInButton:hover {
-                background-color: #2874A6;
-            }
-
-            #errorLabel {
-                color: #A93232;
-                font-size: 12px;
-            }
-
-        """)
-
-
 class RecordForm(QDialog):
     """Build a labelled form. Each dropdown retains the database ID of its selection."""
 
     def __init__(self, parent, title):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
         self.layout = QFormLayout(self)
+        self.layout.setContentsMargins(24, 22, 24, 18)
+        self.layout.setHorizontalSpacing(18)
+        self.layout.setVerticalSpacing(13)
         self.inputs = {}
 
     def line(self, key, caption, value="", placeholder="", limit=240):
@@ -435,7 +475,7 @@ class DashboardPage(QWidget):
         main.setSpacing(0)
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(205)
+        sidebar.setFixedWidth(232)
         nav = QVBoxLayout(sidebar)
         nav.setContentsMargins(18, 25, 18, 20)
         brand = QHBoxLayout()
@@ -447,13 +487,14 @@ class DashboardPage(QWidget):
         nav.addLayout(brand)
         nav.addSpacing(20)
         for i, title in enumerate(self.names):
-            button = QPushButton(title)
+            button = PortalButton(title, "quiet", self._nav_icon(i))
             button.setObjectName("menuButton")
             button.clicked.connect(lambda checked=False, idx=i: self.open_page(idx))
             nav.addWidget(button)
             self.menu_buttons.append(button)
         nav.addStretch()
-        logout = QPushButton("Exit preview" if self.portal.preview else "Logout")
+        logout = PortalButton("Exit preview" if self.portal.preview else "Logout", "danger",
+                              QStyle.StandardPixmap.SP_DialogCloseButton)
         logout.setObjectName("logoutButton")
         logout.clicked.connect(self.logout_requested.emit)
         nav.addWidget(logout)
@@ -461,13 +502,15 @@ class DashboardPage(QWidget):
         panel = QFrame()
         panel.setObjectName("contentArea")
         content = QVBoxLayout(panel)
-        content.setContentsMargins(24, 22, 24, 20)
+        content.setContentsMargins(30, 22, 30, 24)
+        content.setSpacing(16)
         bar = QHBoxLayout()
         self.heading = QLabel("Dashboard")
         self.heading.setObjectName("pageHeading")
         bar.addWidget(self.heading)
         bar.addStretch()
         self.sync_label = QLabel("Offline preview · changes stay in this window" if self.portal.preview else "")
+        self.sync_label.setObjectName("syncStatus")
         self.sync_label.setTextFormat(Qt.TextFormat.PlainText)
         bar.addWidget(self.sync_label)
         identity = QVBoxLayout()
@@ -476,7 +519,10 @@ class DashboardPage(QWidget):
             lab.setTextFormat(Qt.TextFormat.PlainText)
             lab.setObjectName(style)
             identity.addWidget(lab)
-        bar.addLayout(identity)
+        identity_widget = QWidget()
+        identity_widget.setObjectName("identityCard")
+        identity_widget.setLayout(identity)
+        bar.addWidget(identity_widget)
         content.addLayout(bar)
         divider = QFrame()
         divider.setObjectName("headerSeparator")
@@ -489,8 +535,17 @@ class DashboardPage(QWidget):
         content.addWidget(self.pages)
         main.addWidget(sidebar)
         main.addWidget(panel)
-        self.apply_styles()
         self.show_page(0)
+
+    @staticmethod
+    def _nav_icon(index):
+        icons = (
+            QStyle.StandardPixmap.SP_ComputerIcon,
+            QStyle.StandardPixmap.SP_FileDialogInfoView,
+            QStyle.StandardPixmap.SP_DirIcon,
+            QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        )
+        return icons[index] if index < len(icons) else QStyle.StandardPixmap.SP_FileIcon
 
     def dashboard(self):
         page = QFrame()
@@ -520,9 +575,8 @@ class DashboardPage(QWidget):
             "Completed enrolments",
         ]
         for i, title in enumerate(labels):
-            card = QFrame()
-            card.setObjectName("statCard")
-            box = QVBoxLayout(card)
+            card = PortalCard("statCard")
+            box = card.content_layout
             caption = QLabel(title)
             caption.setObjectName("cardTitle")
             value = QLabel()
@@ -532,33 +586,32 @@ class DashboardPage(QWidget):
             grid.addWidget(card, i // 2, i % 2)
             self.stats.append(value)
         lay.addLayout(grid)
-        actions = QFrame()
-        actions.setObjectName("panelCard")
-        buttons = QHBoxLayout(actions)
+        actions = PortalCard("panelCard")
+        buttons = QHBoxLayout()
+        actions.content_layout.addLayout(buttons)
         for action, page_index, text in [
             ("add_student", 1, "Add student"),
             ("add_course", 2, "Add course"),
             ("add_enrollment", 3, "Create enrolment"),
         ]:
             if action in self.portal.actions:
-                btn = QPushButton(text)
+                btn = PortalButton(text, "secondary")
                 btn.setObjectName("quickButton")
                 btn.clicked.connect(lambda checked=False, a=action, p=page_index: self.quick_action(p, a))
                 buttons.addWidget(btn)
                 self.quick_buttons[action] = btn
         if not self.user["staff"]:
-            btn = QPushButton("View my enrolments")
+            btn = PortalButton("View my enrolments", "secondary")
             btn.setObjectName("quickButton")
             btn.clicked.connect(lambda: self.open_page(3))
             buttons.addWidget(btn)
-        refresh = QPushButton("Refresh overview")
+        refresh = PortalButton("Refresh overview", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
         refresh.setObjectName("quickButton")
         refresh.clicked.connect(self.refresh)
         buttons.addWidget(refresh)
         lay.addWidget(actions)
-        activity = QFrame()
-        activity.setObjectName("panelCard")
-        activity_lay = QVBoxLayout(activity)
+        activity = PortalCard("panelCard")
+        activity_lay = activity.content_layout
         label = QLabel("Recent activity this session")
         label.setObjectName("panelHeading")
         activity_lay.addWidget(label)
@@ -576,6 +629,8 @@ class DashboardPage(QWidget):
     def record_page(self, key, title):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 18, 0, 0)
+        layout.setSpacing(14)
         search = QLineEdit()
         search.setPlaceholderText("Search " + title.lower() + "…")
         search.setClearButtonEnabled(True)
@@ -593,26 +648,30 @@ class DashboardPage(QWidget):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.verticalHeader().setDefaultSectionSize(42)
+        table.setCornerButtonEnabled(False)
         layout.addWidget(table)
         self.tables[key], self.searches[key] = table, search
         search.textChanged.connect(lambda value: self.filter_table(key, value))
         out = QHBoxLayout()
         for action, text in BUTTONS[key]:
             if action in self.portal.actions:
-                btn = QPushButton(text)
+                destructive = action in {"delete_student", "delete_course", "delete_enrollment"}
+                btn = PortalButton(text, "danger" if destructive else "secondary")
                 btn.clicked.connect(lambda checked=False, a=action: self.perform(a))
                 out.addWidget(btn)
         if key == "courses":
             options = [(a, t) for a, t in ACADEMIC if a in self.portal.actions]
             if options:
-                academic = QPushButton("Academic setup")
+                academic = PortalButton("Academic setup", "secondary")
                 menu = QMenu(academic)
                 for action, text in options:
                     menu.addAction(text).triggered.connect(lambda checked=False, a=action: self.perform(a))
                 academic.setMenu(menu)
                 out.addWidget(academic)
         out.addStretch()
-        refresh = QPushButton("Refresh")
+        refresh = PortalButton("Refresh", "secondary", QStyle.StandardPixmap.SP_BrowserReload)
         refresh.clicked.connect(self.refresh)
         out.addWidget(refresh)
         layout.addLayout(out)
@@ -847,266 +906,6 @@ class DashboardPage(QWidget):
         values = form.values()
         return None if values is None else dict(values, **extra)
 
-    def apply_styles(self):
-
-        self.setStyleSheet("""
-
-            #sidebar {
-                background-color: #17365D;
-            }
-
-            #sidebarLogo {
-                color: white;
-                font-size: 21px;
-                font-weight: bold;
-            }
-
-            #menuButton {
-                background-color: transparent;
-                color: white;
-                border: none;
-                text-align: left;
-                padding: 13px;
-                border-radius: 5px;
-            }
-
-            #menuButton:hover {
-                background-color: #2874A6;
-            }
-
-            QPushButton#menuButton[active="true"] {
-                background-color: #2874A6;
-                color: white;
-                border-left: 4px solid #FFFFFF;
-                font-weight: bold;
-            }
-
-            QPushButton#menuButton[active="false"] {
-                background-color: transparent;
-                color: white;
-                border: none;
-                text-align: left;
-                padding: 13px;
-                border-radius: 5px;
-            }
-
-            QPushButton#menuButton[active="false"]:hover { background-color: #2874A6; }
-            #logoutButton:hover { border: 1px solid white; }
-
-            #logoutButton {
-                background-color: #A93232;
-                color: white;
-                border: none;
-                padding: 12px;
-                border-radius: 5px;
-            }
-
-            #contentArea {
-                background-color: #F4F6F9;
-            }
-
-            #pageHeading {
-                color: #17365D;
-                font-size: 23px;
-                font-weight: bold;
-            }
-
-            QLabel#userName {
-                color: #17365D;
-                font-size: 13px;
-                font-weight: bold;
-            }
-
-            QLabel#userRole {
-                color: #667085;
-                font-size: 11px;
-            }
-
-            QFrame#headerSeparator {
-                background-color: #D9E0E8;
-                border: none;
-            }
-
-            #welcomeHeading {
-                color: #17365D;
-                font-size: 22px;
-                font-weight: bold;
-            }
-
-            #sectionHeading {
-                color: #17365D;
-                font-size: 21px;
-                font-weight: bold;
-            }
-
-            #statCard {
-                background-color: white;
-                border: 1px solid #E3E8EF;
-                border-radius: 8px;
-                padding: 10px;
-            }
-
-            #cardTitle {
-                color: #667085;
-                font-size: 12px;
-            }
-
-            #cardValue {
-                color: #17365D;
-                font-size: 27px;
-                font-weight: bold;
-            }
-
-            QLineEdit {
-                background-color: white;
-                border: 1px solid #D9E0E8;
-                border-radius: 5px;
-                padding: 10px;
-            }
-
-            QPushButton {
-                background-color: #17365D;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 10px;
-            }
-
-            QPushButton:hover {
-                background-color: #2874A6;
-            }
-
-            QTableWidget {
-                background-color: white;
-                border: 1px solid #E3E8EF;
-                gridline-color: #E8EDF2;
-            }
-
-            QHeaderView::section {
-                background-color: #EAF0F6;
-                color: #17365D;
-                padding: 10px;
-                border: none;
-                font-weight: bold;
-            }
-
-            /* Dashboard page background inside the scroll area */
-
-            #dashboardPage {
-                background-color: #F4F6F9;
-            }
-
-            QScrollArea {
-                background-color: #F4F6F9;
-                border: none;
-            }
-
-            /* Quick Actions and Recent Activity panels */
-
-            #panelCard {
-                background-color: white;
-                border: 1px solid #E3E8EF;
-                border-radius: 8px;
-                padding: 14px;
-            }
-
-            #panelCard:hover,
-            #statCard:hover {
-                border: 1px solid #B9C7D8;
-            }
-
-            #panelHeading {
-                color: #17365D;
-                font-size: 15px;
-                font-weight: bold;
-            }
-
-            #panelDescription {
-                color: #667085;
-                font-size: 12px;
-            }
-
-            #quickButton {
-                background-color: #F0F5FA;
-                color: #17365D;
-                border: 1px solid #D9E0E8;
-                border-radius: 5px;
-                padding: 10px;
-                font-weight: bold;
-            }
-
-            #quickButton:hover {
-                background-color: #2874A6;
-                color: white;
-            }
-
-            #activityList {
-                background-color: #F8FAFC;
-                border: 1px solid #E3E8EF;
-                border-radius: 5px;
-                padding: 6px;
-            }
-
-            #activityList::item {
-                color: #344054;
-                padding: 7px;
-                border-bottom: 1px solid #E8EDF2;
-            }
-
-            #activityList::item:selected {
-                background-color: #EAF0F6;
-                color: #17365D;
-            }
-
-            /* Slim modern scroll bars */
-
-            QScrollBar:vertical {
-                background: #EDF1F6;
-                width: 10px;
-                margin: 0;
-            }
-
-            QScrollBar:horizontal {
-                background: #EDF1F6;
-                height: 10px;
-                margin: 0;
-            }
-
-            QScrollBar::handle:vertical {
-                background: #C3CFDD;
-                border-radius: 5px;
-                min-height: 30px;
-            }
-
-            QScrollBar::handle:horizontal {
-                background: #C3CFDD;
-                border-radius: 5px;
-                min-width: 30px;
-            }
-
-            QScrollBar::handle:vertical:hover,
-            QScrollBar::handle:horizontal:hover {
-                background: #2874A6;
-            }
-
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical,
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0;
-                height: 0;
-            }
-
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical,
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: transparent;
-            }
-
-        """)
-
-
 class StudentPortalApp(QMainWindow):
     def __init__(self, portal):
         super().__init__()
@@ -1169,11 +968,14 @@ def main():
     mode.add_argument("--demo", action="store_true", help="open with disposable in-memory data")
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
-    app.setStyleSheet("""
-        QPushButton:enabled:hover, QCheckBox:enabled:hover, QComboBox:enabled:hover,
-        QSpinBox:enabled:hover, QLineEdit:enabled:hover { color: #17365D; background: #EAF0F6; }
+    app.setStyleSheet(DESIGN_STYLES + """
+        QCheckBox:enabled:hover, QComboBox:enabled:hover, QSpinBox:enabled:hover,
+        QLineEdit:enabled:hover { border-color: #A9B9CC; }
         QTableWidget::item:hover:!selected, QListWidget::item:hover:!selected,
         QHeaderView::section:hover, QMenu::item:selected { background: #EAF0F6; color: #17365D; }
+        #identityCard { background: #FFFFFF; border: 1px solid #E3E8EF; border-radius: 8px; padding: 5px 10px; }
+        #syncStatus { color: #52677F; background: #EAF0F6; border: 1px solid #D9E0E8;
+                      border-radius: 10px; padding: 5px 9px; font-size: 9pt; }
     """)
     app.setFont(QFont("Segoe UI", 10))
     error = None
