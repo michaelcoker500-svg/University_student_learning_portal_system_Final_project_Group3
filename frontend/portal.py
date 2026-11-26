@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .portal_client import DEFAULT_PROFILE, SAVED_PROFILE, Portal, PortalError
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QPoint, QPointF, QObject, QParallelAnimationGroup,
+    QEasingCurve, QEvent, QPoint, QPointF, QRectF, QObject, QParallelAnimationGroup,
     QPropertyAnimation, QRunnable, QSize, Qt, QThreadPool, QTimer, QVariantAnimation,
     QSettings, pyqtSignal, pyqtSlot,
 )
@@ -163,6 +163,9 @@ DESIGN_STYLES = """
     #analyticsRange { background: rgba(255,255,255,185); border: 1px solid white; border-radius: 16px; padding: 2px; }
     #analyticsRange QPushButton { background: transparent; color: #49352D; border: 0; border-radius: 14px; padding: 6px 12px; }
     #analyticsRange QPushButton[active="true"] { background: #171615; color: white; }
+    #statCard[statTone="teal"] { border-top: 4px solid #20A387; }
+    #statCard[statTone="gold"] { border-top: 4px solid #E9A12B; }
+    #statCard[statTone="violet"] { border-top: 4px solid #8B5BB5; }
     #emptyState { color: #667085; background: rgba(255,255,255,130); border: 1px dashed #D8C8BF; border-radius: 12px; padding: 16px; }
     #analyticsLoading { color: #7C4A3A; background: rgba(255,255,255,180); border-radius: 10px; padding: 6px 10px; }
     QDialog { background: #F7F1ED; }
@@ -743,6 +746,8 @@ class StudentProfileDialog(AnimatedDialog):
             ("Official student ID", student.number),
             ("Programme", student.programme),
             ("Gender", student.cell(student.gender)),
+            ("Email", student.cell(student.email)),
+            ("Phone", student.cell(student.phone_number)),
             ("Status", student.status.title()),
         ):
             details.addRow(label, QLabel(value))
@@ -1106,6 +1111,72 @@ class BreakdownChart(QWidget):
         painter.end()
 
 
+class DonutChart(QWidget):
+    """Accessible, dependency-free doughnut chart for snapshot distributions."""
+
+    COLORS = BreakdownChart.COLORS
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.items = []
+        self.total = 0
+        self.dark = False
+        self.setMinimumHeight(170)
+
+    def set_dark(self, dark):
+        self.dark = bool(dark)
+        self.update()
+
+    def set_data(self, values):
+        ranked = sorted(((str(label), int(value)) for label, value in values.items() if value > 0),
+                        key=lambda item: (-item[1], item[0].casefold()))
+        self.items = ranked[:5] + [("Other", sum(value for _label, value in ranked[5:]))] if len(ranked) > 6 else ranked
+        self.total = sum(value for _label, value in self.items)
+        summary = ", ".join(f"{name}: {value}" for name, value in self.items)
+        self.setAccessibleName("Doughnut chart" + (", " + summary if summary else ", no records"))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.items:
+            painter.setPen(QColor("#C6C0BC" if self.dark else "#667085"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No records in this snapshot")
+            painter.end()
+            return
+        size = min(146, max(100, self.height() - 16), max(100, self.width() // 2 - 12))
+        x, y = 8, (self.height() - size) // 2
+        circle = QRectF(x, y, size, size)
+        start = 90 * 16
+        for index, (_label, value) in enumerate(self.items):
+            span = round(360 * 16 * value / self.total)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.COLORS[index % len(self.COLORS)])
+            painter.drawPie(circle, start, -span)
+            start -= span
+        hole = circle.adjusted(size * .27, size * .27, -size * .27, -size * .27)
+        painter.setBrush(QColor("#2A2D32" if self.dark else "#FFFFFF"))
+        painter.drawEllipse(hole)
+        painter.setPen(QColor("#F1ECE8" if self.dark else "#243247"))
+        painter.drawText(hole, Qt.AlignmentFlag.AlignCenter, f"{self.total}\nrecords")
+        legend_x = int(x + size + 16)
+        available = max(72, self.width() - legend_x - 6)
+        row_height = min(26, max(19, (self.height() - 10) // min(6, len(self.items))))
+        for index, (label, value) in enumerate(self.items[:6]):
+            row_y = 6 + index * row_height
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.COLORS[index % len(self.COLORS)])
+            painter.drawEllipse(legend_x, row_y + 6, 9, 9)
+            painter.setPen(QColor("#F1ECE8" if self.dark else "#52677F"))
+            text = self.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, max(28, available - 42))
+            painter.drawText(legend_x + 14, row_y, max(24, available - 42), row_height,
+                             Qt.AlignmentFlag.AlignVCenter, text)
+            painter.setPen(QColor("#F1ECE8" if self.dark else "#243247"))
+            painter.drawText(self.width() - 30, row_y, 26, row_height,
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(value))
+        painter.end()
+
+
 class DashboardReportDialog(AnimatedDialog):
     """Small report of counts that are present in the current authorized snapshot."""
 
@@ -1181,9 +1252,13 @@ class DashboardPage(QWidget):
         self.sidebar_target_expanded = False
         self.revision = 0
         self.pending = None
+        self.pending_revision = None
+        self.empty_snapshot_streak = 0
         self.pending_action = None
         self.poll_timer = QTimer(self)
-        self.poll_timer.setInterval(4000)
+        # Poll gently in the background. Explicit page changes still trigger a
+        # background refresh immediately while keeping the cached page usable.
+        self.poll_timer.setInterval(15000)
         self.poll_timer.timeout.connect(self.poll)
         self.setup_ui()
         self.display()
@@ -1357,7 +1432,7 @@ class DashboardPage(QWidget):
             canvas.set_dark(self.theme_mode == "dark")
         for chart in (self.enrollment_chart, self.analytics_enrollment_chart,
                       self.programme_chart, self.student_status_chart,
-                      self.semester_chart, self.analytics_distribution_chart):
+                      self.semester_chart, self.course_enrolment_chart, self.analytics_distribution_chart):
             chart.set_dark(self.theme_mode == "dark")
         self.update_theme_icon()
 
@@ -1506,6 +1581,8 @@ class DashboardPage(QWidget):
             box.addWidget(caption)
             box.addWidget(value)
             box.addWidget(note)
+            if i:
+                card.setProperty("statTone", ("teal", "gold", "violet")[(i - 1) % 3])
             grid.addWidget(card, 0, i)
             self.stats.append(value)
             self.stat_notes.append(note)
@@ -1573,8 +1650,9 @@ class DashboardPage(QWidget):
             return card
 
         self.programme_chart = BreakdownChart()
-        self.student_status_chart = BreakdownChart()
+        self.student_status_chart = DonutChart()
         self.semester_chart = BreakdownChart()
+        self.course_enrolment_chart = DonutChart()
         self.enrollment_chart = EnrollmentChart()
         analytics.addWidget(chart_card(
             "Students by programme", "Distribution in the records visible to your account", self.programme_chart
@@ -1586,8 +1664,11 @@ class DashboardPage(QWidget):
             "Enrolments by semester", "Terms represented in the current enrolment records", self.semester_chart
         ), 1, 0)
         analytics.addWidget(chart_card(
-            "Enrolment status", "In progress, completed and withdrawn records", self.enrollment_chart
+            "Enrolments by course", "Current enrolment counts grouped by course", self.course_enrolment_chart
         ), 1, 1)
+        analytics.addWidget(chart_card(
+            "Enrolment status", "In progress, completed and withdrawn records", self.enrollment_chart
+        ), 2, 0)
 
         performance = PortalCard("panelCard")
         performance_heading = QLabel("Academic performance")
@@ -1604,7 +1685,7 @@ class DashboardPage(QWidget):
         self.academic_summary.setObjectName("noticeSummary")
         self.academic_summary.setWordWrap(True)
         performance.content_layout.addWidget(self.academic_summary)
-        analytics.addWidget(performance, 2, 0)
+        analytics.addWidget(performance, 2, 1)
 
         notices = PortalCard("panelCard")
         notices_heading = QLabel("Notifications and record checks")
@@ -1617,7 +1698,7 @@ class DashboardPage(QWidget):
         self.notification_list = QListWidget()
         self.notification_list.setObjectName("activityList")
         notices.content_layout.addWidget(self.notification_list)
-        analytics.addWidget(notices, 2, 1)
+        analytics.addWidget(notices, 3, 0, 1, 2)
         lay.addLayout(analytics)
 
         activity = PortalCard("panelCard")
@@ -1715,7 +1796,7 @@ class DashboardPage(QWidget):
             self.analytics_mode_buttons[mode] = button
         distribution_header.addWidget(segment)
         distribution_card.content_layout.addLayout(distribution_header)
-        self.analytics_distribution_chart = BreakdownChart()
+        self.analytics_distribution_chart = DonutChart()
         distribution_card.content_layout.addWidget(self.analytics_distribution_chart)
         distribution_note = QLabel("Charts use the loaded student and enrolment records; they do not imply a date range.")
         distribution_note.setObjectName("panelDescription")
@@ -1941,6 +2022,9 @@ class DashboardPage(QWidget):
         self.programme_chart.set_data(Counter(s.programme or "Unspecified" for s in students))
         self.student_status_chart.set_data(Counter(s.status.title() or "Unspecified" for s in students))
         self.semester_chart.set_data(Counter(e.term or "Unspecified" for e in enrollments))
+        self.course_enrolment_chart.set_data(Counter(
+            f"{e.course_code} Â· {e.course}" for e in enrollments
+        ))
         self.enrollment_chart.set_records(enrollments)
         measurable = [e.progress for e in enrollments if e.progress is not None]
         average_progress = round(sum(measurable) / len(measurable)) if measurable else None
@@ -2274,21 +2358,29 @@ class DashboardPage(QWidget):
             self.start_snapshot_task()
 
     def start_snapshot_task(self):
+        # A single worker owns the pending slot. In particular, a stale task's
+        # completion must never make a newer request look idle.
+        if self.pending is not None:
+            return
         if self.pages.currentIndex() == self.analytics_index:
             self.set_analytics_loading(True)
         self.revision += 1
+        self.pending_revision = self.revision
         self.pending = SnapshotTask(self.portal, self.revision)
         self.pending.signals.finished.connect(self.poll_finished)
         QThreadPool.globalInstance().start(self.pending)
 
     @pyqtSlot(int, object)
     def poll_finished(self, revision, outcome):
-        self.pending = None
-        self.set_analytics_loading(False)
+        if revision == self.pending_revision:
+            self.pending = None
+            self.pending_revision = None
+            self.set_analytics_loading(False)
         # A newer foreground read/write, a sign-out or an open form takes precedence.
         if revision != self.revision or not self.poll_timer.isActive() or QApplication.activeModalWidget() is not None:
             return
         if isinstance(outcome, PortalError):
+            self.empty_snapshot_streak = 0
             action_requested = self.pending_action is not None
             self.pending_action = None
             if outcome.status in (401, 403) or action_requested:
@@ -2297,7 +2389,32 @@ class DashboardPage(QWidget):
                 self.sync_label.setText("Reconnecting · showing last update")
             return
         try:
+            # A complete, successful response with every collection suddenly
+            # empty can happen while the live service is being updated. Keep
+            # showing the last good snapshot until that same state is confirmed.
+            # The warning stays visible; no fake records are introduced.
+            snapshot_dropped_records = isinstance(outcome, dict) and any(
+                isinstance(outcome.get(key), list) and not outcome[key] and getattr(self.portal, key)
+                for key in ("students", "courses", "enrollments")
+            )
+            actions = outcome.get("actions") if isinstance(outcome, dict) else None
+            same_access = (
+                isinstance(actions, (list, tuple, set))
+                and outcome.get("user") == self.portal.user
+                and set(actions) == self.portal.actions
+            )
+            if snapshot_dropped_records and same_access:
+                self.empty_snapshot_streak += 1
+                if self.empty_snapshot_streak < 3:
+                    self.sync_label.setText(
+                        f"Server snapshot is empty ({self.empty_snapshot_streak}/3) Â· showing last update"
+                    )
+                    self.pending_action = None
+                    return
+            else:
+                self.empty_snapshot_streak = 0
             changed = self.portal.apply_snapshot(outcome)
+            self.empty_snapshot_streak = 0
         except PortalError as error:
             self.pending_action = None
             self.sync_label.setText(str(error))
@@ -2327,10 +2444,40 @@ class DashboardPage(QWidget):
         if error.status in (401, 403):
             self.logout_requested.emit()
 
+    def should_hold_empty_snapshot(self, data):
+        """Retain visible records until an all-empty live snapshot is confirmed."""
+        dropped_records = isinstance(data, dict) and any(
+            isinstance(data.get(key), list) and not data[key] and getattr(self.portal, key)
+            for key in ("students", "courses", "enrollments")
+        )
+        actions = data.get("actions") if isinstance(data, dict) else None
+        same_access = (
+            isinstance(actions, (list, tuple, set))
+            and data.get("user") == self.portal.user
+            and set(actions) == self.portal.actions
+        )
+        if dropped_records and same_access:
+            self.empty_snapshot_streak += 1
+            if self.empty_snapshot_streak < 3:
+                self.sync_label.setText(
+                    f"Server snapshot is empty ({self.empty_snapshot_streak}/3) - showing last update"
+                )
+                return True
+        else:
+            self.empty_snapshot_streak = 0
+        return False
+
     def refresh(self):
         self.revision += 1
         try:
-            changed = self.portal.refresh()
+            if self.portal.preview:
+                changed = self.portal.refresh()
+            else:
+                data = self.portal.request("snapshot")
+                if self.should_hold_empty_snapshot(data):
+                    return False
+                changed = self.portal.apply_snapshot(data)
+                self.empty_snapshot_streak = 0
         except PortalError as error:
             self.handle_error(error)
             return False
@@ -2406,28 +2553,29 @@ class DashboardPage(QWidget):
                 form.line("number", "Official student ID", limit=40)
                 form.line("first_name", "Given name(s)", limit=80)
                 form.line("last_name", "Surname", limit=80)
-                form.line("email", "Email address", limit=254)
-                form.line(
-                    "phone_number", "Sierra Leone phone",
-                    placeholder="+232 followed by 8 digits", limit=32
-                )
-                form.number("study_level", "Study level", 1, 32767)
-                form.line(
-                    "admitted_on", "Admission date",
-                    placeholder="YYYY-MM-DD", limit=10
-                )
+                if not self.portal.preview:
+                    form.line("email", "Email address (required by current API)", limit=254)
+                    form.line(
+                        "phone_number", "Sierra Leone phone (required by current API)",
+                        placeholder="+232 followed by 8 digits", limit=32
+                    )
+                    form.number("study_level", "Study level", 1, 32767)
+                    form.line(
+                        "admitted_on", "Admission date",
+                        placeholder="YYYY-MM-DD", limit=10
+                    )
             else:
                 extra.update(id=student.id, version=student.version)
-                profile = getattr(student, "profile", {}) or {}
+                name_parts = student.name.rsplit(" ", 1)
                 form.line(
                     "first_name", "Given name(s)",
-                    profile.get("first_name", ""),
-                    placeholder="Leave both names blank to keep the current name",
+                    name_parts[0] if len(name_parts) == 2 else student.name,
+                    placeholder="Enter both names when changing the name",
                     limit=80
                 )
                 form.line(
                     "last_name", "Surname",
-                    profile.get("last_name", ""),
+                    name_parts[1] if len(name_parts) == 2 else "",
                     placeholder="Enter both names when changing the name",
                     limit=80
                 )
@@ -2481,9 +2629,43 @@ class DashboardPage(QWidget):
             return None
 
         if action == "edit_student":
-            if not values["first_name"] and not values["last_name"]:
+            if self.portal.preview:
+                entered_name = " ".join(
+                    part for part in (values.pop("first_name", "").strip(),
+                                      values.pop("last_name", "").strip()) if part
+                )
+                values["name"] = entered_name or student.name
+            elif not values["first_name"] and not values["last_name"]:
                 values.pop("first_name")
                 values.pop("last_name")
+        if action == "add_student" and self.portal.preview:
+            values["name"] = " ".join(
+                part for part in (values.pop("first_name", "").strip(),
+                                  values.pop("last_name", "").strip()) if part
+            )
+        if action in ("add_student", "edit_student"):
+            email = values.get("email", "").strip()
+            if action == "add_student" and not self.portal.preview and not email:
+                QMessageBox.warning(self, "Student details", "The current portal API requires an email address.")
+                return None
+            if email and (email.count("@") != 1 or any(ch.isspace() for ch in email)
+                          or email.startswith("@") or email.endswith("@")):
+                QMessageBox.warning(self, "Student details", "Enter a valid email address or leave it blank.")
+                return None
+            phone = values.get("phone_number", "").strip()
+            if action == "add_student" and not self.portal.preview and not phone:
+                QMessageBox.warning(self, "Student details", "The current portal API requires a phone number.")
+                return None
+            if phone and (len([ch for ch in phone if ch.isdigit()]) < 7
+                          or any(not (ch.isdigit() or ch in "+()- ") for ch in phone)):
+                QMessageBox.warning(self, "Student details", "Enter a valid phone number or leave it blank.")
+                return None
+            if action == "add_student" and not self.portal.preview:
+                try:
+                    datetime.strptime(values.get("admitted_on", ""), "%Y-%m-%d")
+                except ValueError:
+                    QMessageBox.warning(self, "Student details", "Enter the admission date as YYYY-MM-DD.")
+                    return None
 
         return dict(values, **extra)
 

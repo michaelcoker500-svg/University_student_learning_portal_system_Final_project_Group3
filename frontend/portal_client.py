@@ -44,10 +44,16 @@ class Student(Record):
     version: str
 
     gender: str | None = None
+    email: str | None = None
+    phone_number: str | None = None
 
     @classmethod
     def from_row(cls, row):
-        return super().from_row({"gender": None, **row})
+        values = dict(row)
+        values.setdefault("gender", None)
+        values.setdefault("email", None)
+        values.setdefault("phone_number", values.get("phone"))
+        return super().from_row(values)
 
     def cells(self):
         return [self.number, self.name, self.cell(self.gender), self.programme, self.status.title()]
