@@ -183,12 +183,28 @@ APP_STYLE_EXTRAS = """
     #analyticsLoading { color: #7C4A3A; background: rgba(255,255,255,180); border-radius: 10px; padding: 6px 10px; }
     #analyticsProgress { border: 0; background: rgba(255,255,255,100); border-radius: 3px; max-height: 6px; }
     #analyticsProgress::chunk { background: #E4572E; border-radius: 3px; }
+    #notificationButton {
+        background: #FFFFFF;
+        color: #17365D;
+        border: 1px solid #D9E0E8;
+        border-radius: 18px;
+        padding: 7px 12px;
+        font-weight: 700;
+    }
+    #notificationButton:hover {
+        background: #FFF2EB;
+        border-color: #E4572E;
+    }
 """
 
 DARK_THEME_STYLES = """
     QWidget { color: #EEE9E5; }
     QMainWindow, QDialog { background: #1D1F23; }
     QLineEdit, QComboBox, QSpinBox {
+        color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53;
+        selection-background-color: #E4572E; selection-color: white;
+    }
+    QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox {
         color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53;
         selection-background-color: #E4572E; selection-color: white;
     }
@@ -468,6 +484,21 @@ def sidebar_icon(kind, color="#E5EDF5"):
         painter.drawLine(21, 24, 40, 24)
         painter.drawLine(33, 17, 40, 24)
         painter.drawLine(33, 31, 40, 24)
+    painter.end()
+    return QIcon(image)
+
+
+def moon_icon(color):
+    """Draw a crescent-moon icon in the requested color."""
+    image = QPixmap(48, 48)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(7, 5, 34, 38)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+    painter.drawEllipse(20, 1, 34, 38)
     painter.end()
     return QIcon(image)
 
@@ -1310,6 +1341,13 @@ class DashboardPage(QWidget):
         self.heading = QLabel("Dashboard")
         self.heading.setObjectName("pageHeading")
         bar.addWidget(self.heading)
+        # Notification bell in the top bar
+        self.notification_button = PortalButton("🔔 0", "secondary")
+        self.notification_button.setObjectName("notificationButton")
+        self.notification_button.setAccessibleName("View notifications")
+        self.notification_button.setToolTip("Click to view notifications")
+        self.notification_button.clicked.connect(self.open_notifications)
+        bar.addWidget(self.notification_button)
         bar.addStretch()
         self.global_search = QLineEdit()
         self.global_search.setMaximumWidth(230)
@@ -1320,12 +1358,12 @@ class DashboardPage(QWidget):
         self.search_shortcut.activated.connect(self.global_search.setFocus)
         bar.addWidget(self.global_search)
         self.appearance_toggle = PortalButton(
-            "◐ Light mode" if self.theme_mode == "dark" else "◐ Dark mode", "secondary"
+            "", "secondary"
         )
         self.appearance_toggle.setObjectName("appearanceToggle")
-        self.appearance_toggle.setAccessibleName(
-            "Switch to light mode" if self.theme_mode == "dark" else "Switch to dark mode"
-        )
+        self.appearance_toggle.setIconSize(QSize(20, 20))
+        self.appearance_toggle.setFixedSize(40, 38)
+        self.update_theme_icon()
         self.appearance_toggle.clicked.connect(self.toggle_theme)
         bar.addWidget(self.appearance_toggle)
         self.sync_label = QLabel("Offline preview · changes stay in this window" if self.portal.preview else "")
@@ -1366,6 +1404,15 @@ class DashboardPage(QWidget):
         main.addWidget(panel)
         self.show_page(0)
 
+    def update_theme_icon(self):
+        moon_color = "#FFFFFF" if self.theme_mode == "dark" else "#17365D"
+        self.appearance_toggle.setText("")
+        self.appearance_toggle.setIcon(moon_icon(moon_color))
+        self.appearance_toggle.setToolTip("Toggle theme")
+        self.appearance_toggle.setAccessibleName(
+            "Switch to light mode" if self.theme_mode == "dark" else "Switch to dark mode"
+        )
+
     def toggle_theme(self):
         self.theme_mode = "dark" if self.theme_mode == "light" else "light"
         app = QApplication.instance()
@@ -1378,12 +1425,7 @@ class DashboardPage(QWidget):
                       self.programme_chart, self.student_status_chart,
                       self.semester_chart, self.course_enrolment_chart, self.analytics_distribution_chart):
             chart.set_dark(self.theme_mode == "dark")
-        if self.theme_mode == "dark":
-            self.appearance_toggle.setText("◐ Light mode")
-            self.appearance_toggle.setAccessibleName("Switch to light mode")
-        else:
-            self.appearance_toggle.setText("◐ Dark mode")
-            self.appearance_toggle.setAccessibleName("Switch to dark mode")
+        self.update_theme_icon()
 
     def eventFilter(self, watched, event):
         if watched is self.sidebar or self.sidebar.isAncestorOf(watched):
@@ -1667,6 +1709,9 @@ class DashboardPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(page)
+        # Keep references for the notification button
+        self.dashboard_scroll = scroll
+        self.notifications_card = notices
         return scroll
 
     def analytics_page(self):
@@ -1858,8 +1903,17 @@ class DashboardPage(QWidget):
         table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         table.setHorizontalHeaderLabels(HEADERS[key])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(False)
+        if key == "enrollments":
+            table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        elif key == "students":
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        elif key == "courses":
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.verticalHeader().hide()
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -1916,7 +1970,14 @@ class DashboardPage(QWidget):
             for i, record in enumerate(records.values()):
                 for j, value in enumerate(record.cells()):
                     item = QTableWidgetItem(value)
+
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignLeft |
+                        Qt.AlignmentFlag.AlignVCenter
+                    )
+
                     item.setToolTip(value)
+
                     if j == 0:
                         item.setData(Qt.ItemDataRole.UserRole, record.id)
                     table.setItem(i, j, item)
@@ -2003,7 +2064,38 @@ class DashboardPage(QWidget):
         )
         self.notification_list.clear()
         self.notification_list.addItems(checks or ["No items need attention in the loaded records."])
+        # Update the notification number in the top bar
+        self.update_notification_badge()
         self.render_recent_activity()
+
+    def open_notifications(self):
+        """Open the dashboard and scroll to the notification section."""
+        self.show_page(0)
+        # Wait briefly for the dashboard page to become visible
+        QTimer.singleShot(
+            150,
+            lambda: self.dashboard_scroll.ensureWidgetVisible(
+                self.notifications_card, 0, 20
+            )
+        )
+
+    def update_notification_badge(self):
+        """Show the number of notifications in the top bar."""
+        no_notifications_message = (
+            "No items need attention in the loaded records."
+        )
+        count = self.notification_list.count()
+        # Do not count the empty-state message as a notification
+        if (
+            count == 1
+            and self.notification_list.item(0).text()
+            == no_notifications_message
+        ):
+            count = 0
+        self.notification_button.setText(f"🔔 {count}")
+        self.notification_button.setToolTip(
+            f"{count} notification(s). Click to view."
+        )
 
     def search_records(self):
         query = self.global_search.text().strip().casefold()
