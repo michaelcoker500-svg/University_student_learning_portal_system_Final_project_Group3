@@ -201,6 +201,10 @@ DARK_THEME_STYLES = """
         color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53;
         selection-background-color: #E4572E; selection-color: white;
     }
+    QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox {
+        color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53;
+        selection-background-color: #E4572E; selection-color: white;
+    }
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #F07858; }
     QComboBox QAbstractItemView, QMenu { color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53; }
     QPushButton[variant="primary"] { color: white; background: #D94D2B; border-color: #D94D2B; }
