@@ -469,6 +469,21 @@ def sidebar_icon(kind, color="#E5EDF5"):
     return QIcon(image)
 
 
+def moon_icon(color):
+    """Draw a crescent-moon icon in the requested color."""
+    image = QPixmap(48, 48)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(7, 5, 34, 38)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+    painter.drawEllipse(20, 1, 34, 38)
+    painter.end()
+    return QIcon(image)
+
+
 class LoginPage(QWidget):
     signed_in = pyqtSignal()
 
@@ -1245,12 +1260,12 @@ class DashboardPage(QWidget):
         self.search_shortcut.activated.connect(self.global_search.setFocus)
         bar.addWidget(self.global_search)
         self.appearance_toggle = PortalButton(
-            "◐ Light mode" if self.theme_mode == "dark" else "◐ Dark mode", "secondary"
+            "", "secondary"
         )
         self.appearance_toggle.setObjectName("appearanceToggle")
-        self.appearance_toggle.setAccessibleName(
-            "Switch to light mode" if self.theme_mode == "dark" else "Switch to dark mode"
-        )
+        self.appearance_toggle.setIconSize(QSize(20, 20))
+        self.appearance_toggle.setFixedSize(40, 38)
+        self.update_theme_icon()
         self.appearance_toggle.clicked.connect(self.toggle_theme)
         bar.addWidget(self.appearance_toggle)
         self.sync_label = QLabel("Offline preview · changes stay in this window" if self.portal.preview else "")
@@ -1291,6 +1306,15 @@ class DashboardPage(QWidget):
         main.addWidget(panel)
         self.show_page(0)
 
+    def update_theme_icon(self):
+        moon_color = "#FFFFFF" if self.theme_mode == "dark" else "#17365D"
+        self.appearance_toggle.setText("")
+        self.appearance_toggle.setIcon(moon_icon(moon_color))
+        self.appearance_toggle.setToolTip("Toggle theme")
+        self.appearance_toggle.setAccessibleName(
+            "Switch to light mode" if self.theme_mode == "dark" else "Switch to dark mode"
+        )
+
     def toggle_theme(self):
         self.theme_mode = "dark" if self.theme_mode == "light" else "light"
         app = QApplication.instance()
@@ -1303,12 +1327,7 @@ class DashboardPage(QWidget):
                       self.programme_chart, self.student_status_chart,
                       self.semester_chart, self.analytics_distribution_chart):
             chart.set_dark(self.theme_mode == "dark")
-        if self.theme_mode == "dark":
-            self.appearance_toggle.setText("◐ Light mode")
-            self.appearance_toggle.setAccessibleName("Switch to light mode")
-        else:
-            self.appearance_toggle.setText("◐ Dark mode")
-            self.appearance_toggle.setAccessibleName("Switch to dark mode")
+        self.update_theme_icon()
 
     def eventFilter(self, watched, event):
         if watched is self.sidebar or self.sidebar.isAncestorOf(watched):
