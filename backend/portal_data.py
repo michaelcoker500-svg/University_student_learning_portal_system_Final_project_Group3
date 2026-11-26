@@ -264,28 +264,141 @@ def audit_log(conn, who, limit=50, offset=0):
     return {"entries": entries, "total": total, "limit": limit, "offset": offset}
 
 
-def add_student(conn, who, number, name, programme):
+def _students_has_full_name(conn):
+    result = one(
+        conn,
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'uslp'
+              AND table_name = 'students'
+              AND column_name = 'full_name'
+        ) AS present
+        """,
+    )
+    return result["present"]
+
+
+def add_student(
+    conn, who, number, name=None, programme=None, *,
+    first_name=None, last_name=None, email=None,
+    phone_number=None, study_level=None, admitted_on=None,
+):
+    from datetime import date
+
+    if not all((first_name, last_name, email, phone_number, study_level, admitted_on)):
+        raise PortalError(
+            "To add a student, enter given names, surname, email, "
+            "Sierra Leone phone number, study level and admission date."
+        )
+
+    first = label(first_name, 80)
+    last = label(last_name, 80)
+
+    phone = str(phone_number).strip().replace(" ", "").replace("-", "")
+    if len(phone) == 9 and phone.startswith("0"):
+        phone = "+232" + phone[1:]
+    elif len(phone) == 8 and phone.isdigit():
+        phone = "+232" + phone
+
+    if not (
+        phone.startswith("+232")
+        and len(phone) == 12
+        and phone[4:].isascii()
+        and phone[4:].isdigit()
+    ):
+        raise PortalError("Enter a Sierra Leone phone number with 8 digits after +232.")
+
+    try:
+        admission_date = date.fromisoformat(str(admitted_on))
+    except ValueError:
+        raise PortalError("Enter the admission date as YYYY-MM-DD.") from None
+
+    columns = (
+        "student_id, programme_id, first_name, last_name, "
+        "email, phone_number, study_level, admitted_on"
+    )
+    values = (
+        ":number, :programme, :first_name, :last_name, "
+        ":email, :phone_number, :study_level, :admitted_on"
+    )
+    params = {
+        "number": label(number, 40),
+        "programme": positive(programme),
+        "first_name": first,
+        "last_name": last,
+        "email": label(email, 254),
+        "phone_number": phone,
+        "study_level": positive(study_level),
+        "admitted_on": admission_date,
+    }
+
+    if _students_has_full_name(conn):
+        columns += ", full_name"
+        values += ", :full_name"
+        params["full_name"] = f"{first} {last}"
+
     return one(
         conn,
-        """INSERT INTO uslp_portal.students(student_number,full_name,programme_id)
-        VALUES (:number,:name,:programme) RETURNING student_id AS id""",
-        number=label(number, 40),
-        name=label(name, 240),
-        programme=positive(programme),
+        f"""
+        INSERT INTO uslp.students ({columns})
+        VALUES ({values})
+        RETURNING student_number AS id
+        """,
+        **params,
     )
 
 
-def edit_student(conn, who, id, name, programme, version):
+def edit_student(
+    conn, who, id, name=None, programme=None, version=None, *,
+    first_name=None, last_name=None,
+):
+    params = {
+        "id": positive(id),
+        "programme": positive(programme),
+        "version": label(version, 80),
+    }
+    assignments = ["programme_id = :programme"]
+
+    if first_name is not None or last_name is not None:
+        first = label(first_name, 80)
+        last = label(last_name, 80)
+        params.update(first_name=first, last_name=last)
+        assignments.extend(["first_name = :first_name", "last_name = :last_name"])
+
+        if _students_has_full_name(conn):
+            assignments.append("full_name = :full_name")
+            params["full_name"] = f"{first} {last}"
+
+    elif name is not None:
+        # Older screens send a single display name, even for a programme-only edit.
+        current = one(
+            conn,
+            """
+            SELECT COALESCE(
+                to_jsonb(s)->>'full_name',
+                concat_ws(' ', s.first_name, s.last_name)
+            ) AS display_name
+            FROM uslp.students s
+            WHERE s.student_number = :id
+            """,
+            id=params["id"],
+        )
+        if label(name, 240) != current["display_name"]:
+            raise PortalError("To change a name, enter given names and surname separately.")
+
     return one(
         conn,
-        """UPDATE uslp_portal.students SET full_name=:name,programme_id=:programme
-        WHERE student_id=:id AND updated_at::text=:version RETURNING student_id AS id""",
-        id=positive(id),
-        name=label(name, 240),
-        programme=positive(programme),
-        version=label(version, 80),
+        f"""
+        UPDATE uslp.students
+        SET {", ".join(assignments)}
+        WHERE student_number = :id
+          AND updated_at::text = :version
+        RETURNING student_number AS id
+        """,
+        **params,
     )
-
 
 def deactivate_student(conn, who, id):
     return one(

@@ -2102,7 +2102,7 @@ class DashboardPage(QWidget):
             effect = self.page_effects.get(index)
             if effect is None:
                 effect = QGraphicsOpacityEffect(page)
-                page.setGraphicsEffect(effect)
+                # page.setGraphicsEffect(effect)
                 self.page_effects[index] = effect
             if self.page_fade is not None:
                 self.page_fade.stop()
@@ -2299,14 +2299,41 @@ class DashboardPage(QWidget):
             return {"id": self.selected("students").id}
         extra = {}
         if action in ("add_student", "edit_student"):
-            s = self.selected("students") if action == "edit_student" else None
-            if s:
-                extra.update(id=s.id, version=s.version)
-            else:
+            student = self.selected("students") if action == "edit_student" else None
+
+            if student is None:
                 form.line("number", "Official student ID", limit=40)
-            form.line("name", "Full name", s.name if s else "", limit=240)
+                form.line("first_name", "Given name(s)", limit=80)
+                form.line("last_name", "Surname", limit=80)
+                form.line("email", "Email address", limit=254)
+                form.line(
+                    "phone_number", "Sierra Leone phone",
+                    placeholder="+232 followed by 8 digits", limit=32
+                )
+                form.number("study_level", "Study level", 1, 32767)
+                form.line(
+                    "admitted_on", "Admission date",
+                    placeholder="YYYY-MM-DD", limit=10
+                )
+            else:
+                extra.update(id=student.id, version=student.version)
+                profile = getattr(student, "profile", {}) or {}
+                form.line(
+                    "first_name", "Given name(s)",
+                    profile.get("first_name", ""),
+                    placeholder="Leave both names blank to keep the current name",
+                    limit=80
+                )
+                form.line(
+                    "last_name", "Surname",
+                    profile.get("last_name", ""),
+                    placeholder="Enter both names when changing the name",
+                    limit=80
+                )
+
             form.choose(
-                "programme", "Programme", lookups.get("programmes", []), s.programme_id if s else None
+                "programme", "Programme", lookups.get("programmes", []),
+                student.programme_id if student is not None else None
             )
         elif action in ("add_course", "edit_course"):
             c = self.selected("courses") if action == "edit_course" else None
@@ -2349,7 +2376,15 @@ class DashboardPage(QWidget):
             form.choose("offering", "Course offering", lookups.get("offerings", []))
             form.choose("lecturer", "Lecturer", lookups.get("lecturers", []))
         values = form.values()
-        return None if values is None else dict(values, **extra)
+        if values is None:
+            return None
+
+        if action == "edit_student":
+            if not values["first_name"] and not values["last_name"]:
+                values.pop("first_name")
+                values.pop("last_name")
+
+        return dict(values, **extra)
 
 class StudentPortalApp(QMainWindow):
     def __init__(self, portal):
