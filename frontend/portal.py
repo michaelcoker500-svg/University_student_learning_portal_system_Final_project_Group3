@@ -1866,10 +1866,14 @@ class DashboardPage(QWidget):
             for i, record in enumerate(records.values()):
                 for j, value in enumerate(record.cells()):
                     item = QTableWidgetItem(value)
-                    item.setToolTip(value)
+
                     item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                        Qt.AlignmentFlag.AlignLeft |
+                        Qt.AlignmentFlag.AlignVCenter
                     )
+
+                    item.setToolTip(value)
+
                     if j == 0:
                         item.setData(Qt.ItemDataRole.UserRole, record.id)
                     table.setItem(i, j, item)
