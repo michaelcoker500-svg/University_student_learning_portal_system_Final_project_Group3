@@ -759,6 +759,46 @@ class StudentProfileDialog(AnimatedDialog):
         layout.addWidget(buttons)
 
 
+class CourseProfileDialog(AnimatedDialog):
+    """Course details limited to fields present in the snapshot contract."""
+
+    def __init__(self, parent, course, semesters):
+        super().__init__(parent)
+        self.setWindowTitle("Course details")
+        self.setMinimumWidth(480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 18)
+        layout.setSpacing(14)
+        heading = QLabel(course.title)
+        heading.setObjectName("welcomeHeading")
+        layout.addWidget(heading)
+        details = QFormLayout()
+        details.setHorizontalSpacing(18)
+        details.setVerticalSpacing(10)
+        rows = [
+            ("Course code", course.code),
+            ("Credit units", str(course.credits)),
+            ("Department", course.department),
+            ("Total lessons", course.cell(course.total_lessons)),
+            ("Semesters with enrolments", ", ".join(semesters) or "No enrolment terms in this snapshot"),
+            ("Assigned lecturer", "Not provided by the current API"),
+            ("Course status", "Not provided by the current API"),
+        ]
+        for label, value in rows:
+            item = QLabel(value)
+            item.setWordWrap(True)
+            details.addRow(label, item)
+        layout.addLayout(details)
+        note = QLabel("Semester terms come from enrolment records; they do not enumerate every course offering.")
+        note.setObjectName("panelDescription")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
 class AuditLogSignals(QObject):
     finished = pyqtSignal(object)
 
@@ -939,7 +979,8 @@ class AuditLogDialog(AnimatedDialog):
 
 HEADERS = {
     "students": ["Student ID", "Full name", "Gender", "Programme", "Status"],
-    "courses": ["Code", "Course", "Department", "Credits", "Lessons"],
+    "courses": ["Code", "Course", "Credit units", "Department", "Semesters with enrolments",
+                "Assigned lecturer", "Status"],
     "enrollments": ["Enrolment", "Student", "Course", "Semester", "Lessons", "Progress", "Status"],
 }
 
@@ -1222,7 +1263,7 @@ class DashboardPage(QWidget):
         self.initial_actions = portal.actions.copy()
         self.theme_mode = str(QApplication.instance().property("uslpTheme") or "light")
         self.activities = []
-        self.tables, self.searches, self.status_filters, self.quick_buttons = {}, {}, {}, {}
+        self.tables, self.searches, self.status_filters, self.department_filters, self.quick_buttons = {}, {}, {}, {}, {}
         self.empty_states = {}
         self.audit_events = []
         self.recent_audit_entries = []
@@ -1890,6 +1931,15 @@ class DashboardPage(QWidget):
             status_filter.addItem("Active", "active")
             status_filter.addItem("Inactive", "inactive")
             search_bar.addWidget(status_filter)
+        elif key == "courses":
+            department_filter = QComboBox()
+            department_filter.setAccessibleName("Filter courses by department")
+            department_filter.addItem("All departments", "all")
+            for department in sorted({course.department for course in self.portal.courses.values()},
+                                     key=str.casefold):
+                department_filter.addItem(department, department.casefold())
+            self.department_filters[key] = department_filter
+            search_bar.addWidget(department_filter)
         layout.addLayout(search_bar)
         empty_state = QLabel()
         empty_state.setObjectName("emptyState")
@@ -1928,6 +1978,10 @@ class DashboardPage(QWidget):
             self.status_filters[key] = status_filter
             status_filter.currentIndexChanged.connect(lambda _index: self.filter_table(key, search.text()))
             table.cellDoubleClicked.connect(lambda _row, _column: self.view_selected_student())
+        elif key == "courses":
+            department_filter.currentIndexChanged.connect(lambda _index: self.filter_table(key, search.text()))
+            table.setSortingEnabled(True)
+            table.cellDoubleClicked.connect(lambda _row, _column: self.view_selected_course())
         search.textChanged.connect(lambda value: self.filter_table(key, value))
         out = QHBoxLayout()
         for action, text in BUTTONS[key]:
@@ -1945,7 +1999,14 @@ class DashboardPage(QWidget):
                 audit.clicked.connect(self.open_audit_log)
                 out.addWidget(audit)
         if key == "courses":
-            options = [(a, t) for a, t in ACADEMIC if a in self.portal.actions]
+            details = PortalButton("View details", "secondary")
+            details.clicked.connect(self.view_selected_course)
+            out.addWidget(details)
+            if "assign_lecturer" in self.portal.actions:
+                assign = PortalButton("Assign lecturer to offering", "secondary")
+                assign.clicked.connect(lambda: self.perform("assign_lecturer"))
+                out.addWidget(assign)
+            options = [(a, t) for a, t in ACADEMIC if a in self.portal.actions and a != "assign_lecturer"]
             if options:
                 academic = PortalButton("Academic setup", "secondary")
                 menu = QMenu(academic)
@@ -1962,13 +2023,25 @@ class DashboardPage(QWidget):
 
     def display(self):
         for key, table in self.tables.items():
+            sort_column = table.horizontalHeader().sortIndicatorSection()
+            sort_order = table.horizontalHeader().sortIndicatorOrder()
+            if key == "courses":
+                table.setSortingEnabled(False)
             current = table.item(table.currentRow(), 0) if table.currentRow() >= 0 else None
             selected = current.data(Qt.ItemDataRole.UserRole) if current else None
             records = getattr(self.portal, key)
             table.setRowCount(len(records))
             table.clearSelection()
             for i, record in enumerate(records.values()):
-                for j, value in enumerate(record.cells()):
+                if key == "courses":
+                    terms = sorted({enrollment.term for enrollment in self.portal.enrollments.values()
+                                    if enrollment.course_code == record.code})
+                    cells = [record.code, record.title, str(record.credits), record.department,
+                             ", ".join(terms) if terms else "Not present in current enrolments",
+                             "Not provided by API", "Not provided by API"]
+                else:
+                    cells = record.cells()
+                for j, value in enumerate(cells):
                     item = QTableWidgetItem(value)
 
                     item.setTextAlignment(
@@ -1985,6 +2058,9 @@ class DashboardPage(QWidget):
                     table.selectRow(i)
             self.filter_table(key, self.searches[key].text())
             table.resizeColumnsToContents()
+            if key == "courses":
+                table.setSortingEnabled(True)
+                table.sortItems(max(0, sort_column), sort_order)
 
         students = list(self.portal.students.values())
         courses = list(self.portal.courses.values())
@@ -2202,7 +2278,12 @@ class DashboardPage(QWidget):
                 or status_filter.currentData() == "all"
                 or (table.item(i, 4) and table.item(i, 4).text().casefold() == status_filter.currentData())
             )
-            visible = matches_query and matches_status
+            department_filter = self.department_filters.get(key)
+            matches_department = (
+                department_filter is None or department_filter.currentData() == "all"
+                or (table.item(i, 3) and table.item(i, 3).text().casefold() == department_filter.currentData())
+            )
+            visible = matches_query and matches_status and matches_department
             table.setRowHidden(i, not visible)
             visible_rows += int(visible)
         empty = self.empty_states.get(key)
@@ -2214,6 +2295,16 @@ class DashboardPage(QWidget):
                 f"No {singular} records match the current search or filters."
             )
             empty.setVisible(visible_rows == 0)
+
+    def view_selected_course(self):
+        try:
+            course = self.selected("courses")
+        except PortalError as error:
+            self.handle_error(error)
+            return
+        terms = sorted({enrollment.term for enrollment in self.portal.enrollments.values()
+                        if enrollment.course_code == course.code})
+        CourseProfileDialog(self, course, terms).exec()
 
     def view_selected_student(self):
         try:
@@ -2584,7 +2675,7 @@ class DashboardPage(QWidget):
             form.choose(
                 "department", "Department", lookups.get("departments", []), c.department_id if c else None
             )
-            form.number("credits", "Credits", c.credits if c else 1, 32767)
+            form.number("credits", "Credit units", c.credits if c else 1, 32767)
             form.number("lessons", "Total lessons", c.total_lessons if c else None, 10000, True)
         elif action == "add_enrollment":
             choices = [
@@ -2618,6 +2709,20 @@ class DashboardPage(QWidget):
         values = form.values()
         if values is None:
             return None
+
+        if action in ("add_course", "edit_course"):
+            code = values.get("code", "").strip().upper()
+            title_value = values.get("title", "").strip()
+            if not code or len(code) > 20 or not all(ch.isalnum() or ch in "-_" for ch in code):
+                QMessageBox.warning(
+                    self, "Course details", "Enter a course code using letters, numbers, hyphens or underscores."
+                )
+                return None
+            if not title_value:
+                QMessageBox.warning(self, "Course details", "Enter a course name.")
+                return None
+            values["code"] = code
+            values["title"] = title_value
 
         if action == "edit_student":
             if self.portal.preview:
