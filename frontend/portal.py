@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -705,6 +707,98 @@ class EnrollmentChart(QWidget):
         painter.end()
 
 
+class BreakdownChart(QWidget):
+    """Reusable horizontal breakdown chart for values in the loaded snapshot."""
+
+    COLORS = (QColor("#2874A6"), QColor("#34866A"), QColor("#D28A36"),
+              QColor("#8050A8"), QColor("#C85A4A"), QColor("#5D7895"))
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.items = []
+        self.setMinimumHeight(120)
+
+    def set_data(self, values):
+        ranked = sorted(((str(label), int(count)) for label, count in values.items() if count > 0),
+                        key=lambda pair: (-pair[1], pair[0].casefold()))
+        if len(ranked) > 6:
+            ranked = ranked[:5] + [("Other", sum(count for _label, count in ranked[5:]))]
+        self.items = ranked
+        self.setMinimumHeight(max(120, len(self.items) * 34 + 18))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.items:
+            painter.setPen(QColor("#667085"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No records in this snapshot")
+            painter.end()
+            return
+        label_width = min(140, max(86, self.width() // 3))
+        value_width = 34
+        bar_x = label_width
+        bar_width = max(18, self.width() - label_width - value_width - 10)
+        maximum = max(value for _label, value in self.items)
+        for index, (label, value) in enumerate(self.items):
+            y = 6 + index * 34
+            painter.setPen(QColor("#52677F"))
+            painter.drawText(0, y, label_width - 8, 22, Qt.AlignmentFlag.AlignVCenter,
+                             self.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, label_width - 8))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#EDF1F6"))
+            painter.drawRoundedRect(bar_x, y + 4, bar_width, 14, 7, 7)
+            painter.setBrush(self.COLORS[index % len(self.COLORS)])
+            painter.drawRoundedRect(bar_x, y + 4, max(7, int(bar_width * value / maximum)), 14, 7, 7)
+            painter.setPen(QColor("#243247"))
+            painter.drawText(bar_x + bar_width + 6, y, value_width - 6, 22,
+                             Qt.AlignmentFlag.AlignVCenter, str(value))
+        painter.end()
+
+
+class DashboardReportDialog(QDialog):
+    """Small report of counts that are present in the current authorized snapshot."""
+
+    def __init__(self, parent, portal):
+        super().__init__(parent)
+        self.setWindowTitle("Snapshot report")
+        self.setMinimumSize(520, 430)
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "Counts reflect the records available to your account in the current snapshot. "
+            + ("Preview records are fictional and held in memory." if portal.preview else
+               "This report does not include records outside your access scope.")
+        )
+        note.setObjectName("panelDescription")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        students = list(portal.students.values())
+        enrollments = list(portal.enrollments.values())
+        lecturers = portal.lookups.get("lecturers")
+        rows = [
+            ("Students in snapshot", str(len(students))),
+            ("Active students", str(sum(s.status.casefold() == "active" for s in students))),
+            ("Courses in snapshot", str(len(portal.courses))),
+            ("Enrolments in snapshot", str(len(enrollments))),
+            ("Completed enrolments", str(sum(e.status.casefold() == "completed" for e in enrollments))),
+            ("Active lecturers", str(len(lecturers)) if lecturers is not None else "Not available"),
+        ]
+        table = QTableWidget(len(rows), 2)
+        table.setHorizontalHeaderLabels(["Measure", "Value"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().hide()
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(value))
+        layout.addWidget(table)
+        close = PortalButton("Close", "secondary")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+
 class DashboardPage(QWidget):
     logout_requested = pyqtSignal()
     access_changed = pyqtSignal()
@@ -717,6 +811,10 @@ class DashboardPage(QWidget):
         self.activities = []
         self.tables, self.searches, self.status_filters, self.quick_buttons = {}, {}, {}, {}
         self.audit_events = []
+        self.recent_audit_entries = []
+        self.activity_task = None
+        self.activity_needs_refresh = False
+        self.activity_error = None
         self.menu_buttons = []
         staff = self.user["staff"]
         self.lecturer = "Lecturer" in self.user["roles"]
@@ -734,6 +832,7 @@ class DashboardPage(QWidget):
         self.poll_timer.timeout.connect(self.poll)
         self.setup_ui()
         self.display()
+        self.load_recent_activity()
         if not portal.preview:
             self.mark_updated()
             self.poll_timer.start()
@@ -777,6 +876,12 @@ class DashboardPage(QWidget):
         self.heading.setObjectName("pageHeading")
         bar.addWidget(self.heading)
         bar.addStretch()
+        self.global_search = QLineEdit()
+        self.global_search.setMaximumWidth(300)
+        self.global_search.setPlaceholderText("Search loaded records…")
+        self.global_search.setAccessibleName("Search loaded student, course and enrolment records")
+        self.global_search.returnPressed.connect(self.search_records)
+        bar.addWidget(self.global_search)
         self.sync_label = QLabel("Offline preview · changes stay in this window" if self.portal.preview else "")
         self.sync_label.setObjectName("syncStatus")
         self.sync_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -809,29 +914,35 @@ class DashboardPage(QWidget):
         page = QFrame()
         page.setObjectName("dashboardPage")
         lay = QVBoxLayout(page)
+        lay.setContentsMargins(2, 16, 2, 18)
         lay.setSpacing(15)
         welcome = QLabel("Welcome, " + self.user["name"])
         welcome.setTextFormat(Qt.TextFormat.PlainText)
         welcome.setObjectName("welcomeHeading")
         lay.addWidget(welcome)
         staff = self.user["staff"]
-        lay.addWidget(
-            QLabel(
-                "University academic records"
-                if staff
-                else "Your assigned teaching and class records"
-                if self.lecturer
-                else "Your student record, courses and learning progress"
-            )
+        description = QLabel(
+            "University academic records" if staff else
+            "Your assigned teaching and class records" if self.lecturer else
+            "Your student record, courses and learning progress"
         )
+        description.setObjectName("panelDescription")
+        lay.addWidget(description)
+        if self.portal.preview:
+            demo_note = QLabel("Demonstration mode · fictional records held in memory")
+            demo_note.setObjectName("noticeSummary")
+            lay.addWidget(demo_note)
+
         grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
         self.stats = []
-        labels = [
-            "Students" if staff else "My students" if self.lecturer else "Student ID",
-            "Courses" if staff else "My courses",
-            "Enrolments" if staff else "My enrolments",
-            "Completed enrolments",
-        ]
+        self.stat_notes = []
+        if staff:
+            labels = ["Total students", "Active lecturers", "Total courses", "Total enrolments"]
+        elif self.lecturer:
+            labels = ["My students", "My courses", "My enrolments", "In progress"]
+        else:
+            labels = ["Student ID", "My courses", "My enrolments", "Completed enrolments"]
         for i, title in enumerate(labels):
             card = PortalCard("statCard")
             box = card.content_layout
@@ -839,16 +950,29 @@ class DashboardPage(QWidget):
             caption.setObjectName("cardTitle")
             value = QLabel()
             value.setObjectName("cardValue")
+            note = QLabel()
+            note.setObjectName("panelDescription")
             box.addWidget(caption)
             box.addWidget(value)
-            grid.addWidget(card, i // 2, i % 2)
+            box.addWidget(note)
+            grid.addWidget(card, 0, i)
             self.stats.append(value)
+            self.stat_notes.append(note)
         lay.addLayout(grid)
+
         actions = PortalCard("panelCard")
-        buttons = QHBoxLayout()
+        buttons = QGridLayout()
+        buttons.setSpacing(8)
         actions.content_layout.addLayout(buttons)
+        button_index = 0
+
+        def add_quick_button(button):
+            nonlocal button_index
+            buttons.addWidget(button, button_index // 3, button_index % 3)
+            button_index += 1
+
         for action, page_index, text in [
-            ("add_student", 1, "Add student"),
+            ("add_student", 1, "Register student"),
             ("add_course", 2, "Add course"),
             ("add_enrollment", 3, "Create enrolment"),
         ]:
@@ -856,61 +980,106 @@ class DashboardPage(QWidget):
                 btn = PortalButton(text, "secondary")
                 btn.setObjectName("quickButton")
                 btn.clicked.connect(lambda checked=False, a=action, p=page_index: self.quick_action(p, a))
-                buttons.addWidget(btn)
+                add_quick_button(btn)
                 self.quick_buttons[action] = btn
-        if not self.user["staff"]:
-            btn = PortalButton("View my enrolments", "secondary")
-            btn.setObjectName("quickButton")
-            btn.clicked.connect(lambda: self.open_page(3))
-            buttons.addWidget(btn)
+        manage = PortalButton("Manage enrolments", "secondary")
+        manage.setObjectName("quickButton")
+        manage.clicked.connect(lambda: self.open_page(3))
+        add_quick_button(manage)
+        self.quick_buttons["manage_enrollments"] = manage
+        reports = PortalButton("View reports", "secondary")
+        reports.setObjectName("quickButton")
+        reports.clicked.connect(self.open_report)
+        add_quick_button(reports)
+        self.quick_buttons["view_reports"] = reports
         refresh = PortalButton("Refresh overview", "secondary")
         refresh.setObjectName("quickButton")
-        refresh.clicked.connect(self.refresh_async)
-        buttons.addWidget(refresh)
+        refresh.clicked.connect(self.refresh_overview)
+        add_quick_button(refresh)
+        self.quick_buttons["refresh"] = refresh
         if staff:
             audit = PortalButton("Audit log", "secondary")
             audit.setObjectName("quickButton")
             audit.clicked.connect(self.open_audit_log)
-            buttons.addWidget(audit)
+            add_quick_button(audit)
+            self.quick_buttons["audit_log"] = audit
         lay.addWidget(actions)
 
-        summary_row = QHBoxLayout()
-        summary_row.setSpacing(14)
-        chart_card = PortalCard("panelCard")
-        chart_heading = QLabel("Enrolment overview")
-        chart_heading.setObjectName("panelHeading")
-        chart_card.content_layout.addWidget(chart_heading)
-        chart_note = QLabel("Current records by enrolment status")
-        chart_note.setObjectName("panelDescription")
-        chart_card.content_layout.addWidget(chart_note)
-        self.enrollment_chart = EnrollmentChart()
-        chart_card.content_layout.addWidget(self.enrollment_chart)
-        summary_row.addWidget(chart_card, 2)
+        analytics = QGridLayout()
+        analytics.setHorizontalSpacing(14)
+        analytics.setVerticalSpacing(14)
 
-        notice_card = PortalCard("panelCard")
-        notice_heading = QLabel("Notifications")
-        notice_heading.setObjectName("panelHeading")
-        notice_card.content_layout.addWidget(notice_heading)
+        def chart_card(title, subtitle, chart):
+            card = PortalCard("panelCard")
+            heading = QLabel(title)
+            heading.setObjectName("panelHeading")
+            card.content_layout.addWidget(heading)
+            note = QLabel(subtitle)
+            note.setObjectName("panelDescription")
+            note.setWordWrap(True)
+            card.content_layout.addWidget(note)
+            card.content_layout.addWidget(chart)
+            return card
+
+        self.programme_chart = BreakdownChart()
+        self.student_status_chart = BreakdownChart()
+        self.semester_chart = BreakdownChart()
+        self.enrollment_chart = EnrollmentChart()
+        analytics.addWidget(chart_card(
+            "Students by programme", "Distribution in the records visible to your account", self.programme_chart
+        ), 0, 0)
+        analytics.addWidget(chart_card(
+            "Student status", "Current status in the loaded student records", self.student_status_chart
+        ), 0, 1)
+        analytics.addWidget(chart_card(
+            "Enrolments by semester", "Terms represented in the current enrolment records", self.semester_chart
+        ), 1, 0)
+        analytics.addWidget(chart_card(
+            "Enrolment status", "In progress, completed and withdrawn records", self.enrollment_chart
+        ), 1, 1)
+
+        performance = PortalCard("panelCard")
+        performance_heading = QLabel("Academic performance")
+        performance_heading.setObjectName("panelHeading")
+        performance.content_layout.addWidget(performance_heading)
+        performance_note = QLabel(
+            "Grades and assessment marks are not included in the current API. "
+            "Lesson completion is shown separately and is not a grade."
+        )
+        performance_note.setObjectName("panelDescription")
+        performance_note.setWordWrap(True)
+        performance.content_layout.addWidget(performance_note)
+        self.academic_summary = QLabel()
+        self.academic_summary.setObjectName("noticeSummary")
+        self.academic_summary.setWordWrap(True)
+        performance.content_layout.addWidget(self.academic_summary)
+        analytics.addWidget(performance, 2, 0)
+
+        notices = PortalCard("panelCard")
+        notices_heading = QLabel("Notifications and record checks")
+        notices_heading.setObjectName("panelHeading")
+        notices.content_layout.addWidget(notices_heading)
         self.notice_summary = QLabel()
-        self.notice_summary.setObjectName("noticeSummary")
+        self.notice_summary.setObjectName("panelDescription")
         self.notice_summary.setWordWrap(True)
-        notice_card.content_layout.addWidget(self.notice_summary)
-        notice_detail = QLabel("The current API snapshot does not include server notifications.")
-        notice_detail.setObjectName("panelDescription")
-        notice_detail.setWordWrap(True)
-        notice_card.content_layout.addWidget(notice_detail)
-        notice_card.content_layout.addStretch()
-        summary_row.addWidget(notice_card, 1)
-        lay.addLayout(summary_row)
+        notices.content_layout.addWidget(self.notice_summary)
+        self.notification_list = QListWidget()
+        self.notification_list.setObjectName("activityList")
+        notices.content_layout.addWidget(self.notification_list)
+        analytics.addWidget(notices, 2, 1)
+        lay.addLayout(analytics)
 
         activity = PortalCard("panelCard")
         activity_lay = activity.content_layout
-        label = QLabel("Recent activity this session")
-        label.setObjectName("panelHeading")
-        activity_lay.addWidget(label)
+        self.activity_heading = QLabel("Recent activity")
+        self.activity_heading.setObjectName("panelHeading")
+        activity_lay.addWidget(self.activity_heading)
+        activity_note = QLabel("Newest first · sourced from the audit log for staff, or this session in preview mode")
+        activity_note.setObjectName("panelDescription")
+        activity_note.setWordWrap(True)
+        activity_lay.addWidget(activity_note)
         self.activity_list = QListWidget()
         self.activity_list.setObjectName("activityList")
-        self.activity_list.addItem("No activity yet.")
         activity_lay.addWidget(self.activity_list)
         lay.addWidget(activity)
         lay.addStretch()
@@ -1010,26 +1179,151 @@ class DashboardPage(QWidget):
                     table.selectRow(i)
             self.filter_table(key, self.searches[key].text())
             table.resizeColumnsToContents()
-        student_value = str(len(self.portal.students))
-        if not self.user["staff"] and not self.lecturer:
-            record = next(iter(self.portal.students.values()), None)
-            student_value = record.number if record else "—"
-        totals = [
-            student_value,
-            len(self.portal.courses),
-            len(self.portal.enrollments),
-            sum(e.status == "completed" for e in self.portal.enrollments.values()),
-        ]
-        for widget, value in zip(self.stats, totals):
-            widget.setText(str(value))
+
+        students = list(self.portal.students.values())
+        courses = list(self.portal.courses.values())
         enrollments = list(self.portal.enrollments.values())
-        self.enrollment_chart.set_records(enrollments)
-        in_progress = sum(e.status.casefold() in {"enrolled", "active"} for e in enrollments)
         completed = sum(e.status.casefold() == "completed" for e in enrollments)
-        self.notice_summary.setText(
-            f"{in_progress} in progress  ·  {completed} completed"
-            if enrollments else "No enrolment notices in the current snapshot."
+        active_lecturers = self.portal.lookups.get("lecturers")
+        if self.user["staff"]:
+            totals = [len(students), len(active_lecturers) if active_lecturers is not None else "—",
+                      len(courses), len(enrollments)]
+            notes = ["Records in your snapshot", "Active lecturer records" if active_lecturers is not None
+                     else "Not provided for this account", "Available in your snapshot", "Current records"]
+        elif self.lecturer:
+            totals = [len(students), len(courses), len(enrollments),
+                      sum(e.status.casefold() in {"enrolled", "active"} for e in enrollments)]
+            notes = ["Assigned student records", "Courses available to you", "Your enrolment records",
+                     "Enrolled or active"]
+        else:
+            student = next(iter(self.portal.students.values()), None)
+            totals = [student.number if student else "—", len(courses), len(enrollments), completed]
+            notes = ["Your student ID" if student else "Not available", "Courses in your snapshot",
+                     "Your enrolment records", "Completed records"]
+        for widget, value, note, note_text in zip(self.stats, totals, self.stat_notes, notes):
+            widget.setText(str(value))
+            note.setText(note_text)
+
+        self.programme_chart.set_data(Counter(s.programme or "Unspecified" for s in students))
+        self.student_status_chart.set_data(Counter(s.status.title() or "Unspecified" for s in students))
+        self.semester_chart.set_data(Counter(e.term or "Unspecified" for e in enrollments))
+        self.enrollment_chart.set_records(enrollments)
+        measurable = [e.progress for e in enrollments if e.progress is not None]
+        average_progress = round(sum(measurable) / len(measurable)) if measurable else None
+        self.academic_summary.setText(
+            f"Completed enrolments: {completed} of {len(enrollments)}. "
+            + (f"Average lesson completion: {average_progress}% across {len(measurable)} records."
+               if measurable else "Lesson completion totals are unavailable for these enrolments.")
         )
+
+        checks = []
+        inactive = sum(s.status.casefold() != "active" for s in students)
+        withdrawn = sum(e.status.casefold() == "withdrawn" for e in enrollments)
+        missing_lessons = sum(c.total_lessons is None for c in courses)
+        if inactive:
+            checks.append(f"{inactive} student record(s) are not active")
+        if withdrawn:
+            checks.append(f"{withdrawn} enrolment record(s) are withdrawn")
+        if missing_lessons:
+            checks.append(f"{missing_lessons} course(s) have no lesson total")
+        self.notice_summary.setText(
+            "Record checks from this snapshot; the current API does not provide server notifications."
+        )
+        self.notification_list.clear()
+        self.notification_list.addItems(checks or ["No items need attention in the loaded records."])
+        self.render_recent_activity()
+
+    def search_records(self):
+        query = self.global_search.text().strip().casefold()
+        if not query:
+            return
+        for index, key in enumerate(("students", "courses", "enrollments"), 1):
+            table = self.tables[key]
+            for row in range(table.rowCount()):
+                cells = [table.item(row, column).text() for column in range(table.columnCount())
+                         if table.item(row, column)]
+                if query in " ".join(cells).casefold():
+                    self.show_page(index)
+                    if key == "students" and key in self.status_filters:
+                        self.status_filters[key].setCurrentIndex(0)
+                    self.searches[key].setText(self.global_search.text())
+                    table.selectRow(row)
+                    table.setFocus()
+                    self.sync_label.setText("Showing a match in loaded records")
+                    return
+        self.sync_label.setText("No matches in the records currently loaded")
+
+    def open_report(self):
+        DashboardReportDialog(self, self.portal).exec()
+
+    def refresh_overview(self):
+        self.refresh_async()
+        self.load_recent_activity()
+
+    def load_recent_activity(self):
+        if self.portal.preview or not self.user["staff"]:
+            self.render_recent_activity()
+            return
+        if self.activity_task is not None:
+            self.activity_needs_refresh = True
+            return
+        self.activity_error = None
+        self.activity_task = AuditLogTask(self.portal, 8, 0)
+        self.activity_task.signals.finished.connect(self.recent_activity_loaded)
+        QThreadPool.globalInstance().start(self.activity_task)
+
+    @pyqtSlot(object)
+    def recent_activity_loaded(self, result):
+        self.activity_task = None
+        if isinstance(result, PortalError):
+            self.activity_error = str(result)
+            self.recent_audit_entries = []
+        else:
+            self.activity_error = None
+            self.recent_audit_entries = list(result.get("entries", []))
+        self.render_recent_activity()
+        if self.activity_needs_refresh:
+            self.activity_needs_refresh = False
+            self.load_recent_activity()
+
+    def render_recent_activity(self):
+        if not hasattr(self, "activity_list"):
+            return
+        self.activity_list.clear()
+        if self.portal.preview or not self.user["staff"] or self.activity_error:
+            rows = sorted(self.audit_events, key=lambda entry: entry.get("time", ""), reverse=True)
+            self.activity_heading.setText("Recent activity this session")
+            if self.activity_error and self.user["staff"] and not rows:
+                self.activity_list.addItem("Persistent activity is temporarily unavailable.")
+            else:
+                for entry in rows[:8]:
+                    line = f"{entry.get('time', '')}  ·  {entry.get('account', '')}  ·  " \
+                           f"{entry.get('action', '')}  ·  {entry.get('record', '')}"
+                    item = QListWidgetItem(line)
+                    item.setToolTip(entry.get("details", ""))
+                    self.activity_list.addItem(item)
+                if not rows:
+                    self.activity_list.addItem("No activity recorded in this session yet.")
+            return
+        self.activity_heading.setText("Recent system activity")
+        for entry in self.recent_audit_entries[:8]:
+            when = AuditLogDialog.format_value(entry.get("occurred_at"))
+            actor = entry.get("actor_name") or entry.get("database_user") or "Unknown account"
+            username = entry.get("actor_username")
+            if username:
+                actor += f" ({username})"
+            operation = str(entry.get("operation") or "Activity").replace("_", " ").title()
+            table = str(entry.get("table_name") or "record").replace("_", " ").title()
+            record = AuditLogDialog.format_value(entry.get("record_key"))
+            item = QListWidgetItem(f"{when}  ·  {actor}  ·  {operation} {table}  ·  {record}")
+            item.setToolTip(
+                f"Account: {actor}\nOperation: {operation}\nRecord: {record}\n"
+                f"Before: {AuditLogDialog.format_value(entry.get('old_data'))}\n"
+                f"After: {AuditLogDialog.format_value(entry.get('new_data'))}"
+            )
+            self.activity_list.addItem(item)
+        if not self.recent_audit_entries:
+            self.activity_list.addItem("No persistent activity records are available yet.")
 
     def filter_table(self, key, value):
         table = self.tables[key]
@@ -1109,6 +1403,8 @@ class DashboardPage(QWidget):
 
     def open_page(self, index):
         self.show_page(index)
+        if index == 0:
+            self.load_recent_activity()
         if not self.portal.preview:
             self.refresh_async()
 
@@ -1181,6 +1477,8 @@ class DashboardPage(QWidget):
             return False
         if changed:
             self.display()
+            if self.pages.currentIndex() == 0:
+                self.load_recent_activity()
         self.mark_updated()
         return True
 
@@ -1228,9 +1526,9 @@ class DashboardPage(QWidget):
         if action == "complete_lesson":
             message += f" · {result['lessons_completed']}/{result['total_lessons']} lessons"
         self.activities.insert(0, datetime.now().strftime("%H:%M") + "   " + message)
-        self.activity_list.clear()
-        self.activity_list.addItems(self.activities[:8])
+        self.render_recent_activity()
         self.refresh()
+        self.load_recent_activity()
 
     def action_fields(self, action):
         title = TITLES[action]
