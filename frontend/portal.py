@@ -180,6 +180,18 @@ APP_STYLE_EXTRAS = """
     #analyticsLoading { color: #7C4A3A; background: rgba(255,255,255,180); border-radius: 10px; padding: 6px 10px; }
     #analyticsProgress { border: 0; background: rgba(255,255,255,100); border-radius: 3px; max-height: 6px; }
     #analyticsProgress::chunk { background: #E4572E; border-radius: 3px; }
+    #notificationButton {
+        background: #FFFFFF;
+        color: #17365D;
+        border: 1px solid #D9E0E8;
+        border-radius: 18px;
+        padding: 7px 12px;
+        font-weight: 700;
+    }
+    #notificationButton:hover {
+        background: #FFF2EB;
+        border-color: #E4572E;
+    }
 """
 
 DARK_THEME_STYLES = """
@@ -1250,6 +1262,13 @@ class DashboardPage(QWidget):
         self.heading = QLabel("Dashboard")
         self.heading.setObjectName("pageHeading")
         bar.addWidget(self.heading)
+        # Notification bell in the top bar
+        self.notification_button = PortalButton("🔔 0", "secondary")
+        self.notification_button.setObjectName("notificationButton")
+        self.notification_button.setAccessibleName("View notifications")
+        self.notification_button.setToolTip("Click to view notifications")
+        self.notification_button.clicked.connect(self.open_notifications)
+        bar.addWidget(self.notification_button)
         bar.addStretch()
         self.global_search = QLineEdit()
         self.global_search.setMaximumWidth(230)
@@ -1605,6 +1624,9 @@ class DashboardPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(page)
+        # Keep references for the notification button
+        self.dashboard_scroll = scroll
+        self.notifications_card = notices
         return scroll
 
     def analytics_page(self):
@@ -1954,7 +1976,38 @@ class DashboardPage(QWidget):
         )
         self.notification_list.clear()
         self.notification_list.addItems(checks or ["No items need attention in the loaded records."])
+        # Update the notification number in the top bar
+        self.update_notification_badge()
         self.render_recent_activity()
+
+    def open_notifications(self):
+        """Open the dashboard and scroll to the notification section."""
+        self.show_page(0)
+        # Wait briefly for the dashboard page to become visible
+        QTimer.singleShot(
+            150,
+            lambda: self.dashboard_scroll.ensureWidgetVisible(
+                self.notifications_card, 0, 20
+            )
+        )
+
+    def update_notification_badge(self):
+        """Show the number of notifications in the top bar."""
+        no_notifications_message = (
+            "No items need attention in the loaded records."
+        )
+        count = self.notification_list.count()
+        # Do not count the empty-state message as a notification
+        if (
+            count == 1
+            and self.notification_list.item(0).text()
+            == no_notifications_message
+        ):
+            count = 0
+        self.notification_button.setText(f"🔔 {count}")
+        self.notification_button.setToolTip(
+            f"{count} notification(s). Click to view."
+        )
 
     def search_records(self):
         query = self.global_search.text().strip().casefold()
