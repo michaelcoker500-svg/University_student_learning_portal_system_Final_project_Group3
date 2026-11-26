@@ -1,6 +1,7 @@
 """University Student Learning Portal desktop GUI. Connect to the team API or use an offline preview."""
 
 import argparse
+import csv
 import json
 import sys
 from collections import Counter
@@ -8,8 +9,14 @@ from datetime import datetime
 from pathlib import Path
 
 from .portal_client import DEFAULT_PROFILE, SAVED_PROFILE, Portal, PortalError
-from PyQt6.QtCore import QPointF, QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap, QPolygonF
+from PyQt6.QtCore import (
+    QEasingCurve, QEvent, QPointF, QObject, QRunnable, QSize, Qt, QThreadPool, QTimer,
+    QVariantAnimation, QPropertyAnimation, QSettings, pyqtSignal, pyqtSlot,
+)
+from PyQt6.QtGui import (
+    QColor, QCursor, QFont, QIcon, QKeySequence, QPainter, QPen, QPixmap, QPolygonF, QRadialGradient,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -20,6 +27,8 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -30,6 +39,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -43,34 +53,34 @@ from PyQt6.QtWidgets import (
 
 DESIGN_STYLES = """
     QWidget { color: #243247; font-family: 'Segoe UI'; font-size: 10pt; }
-    QMainWindow, QDialog { background: #F4F6F9; }
+    QMainWindow, QDialog { background: #F4F1EE; }
     QLineEdit, QComboBox, QSpinBox {
         background: #FFFFFF; border: 1px solid #D9E0E8; border-radius: 6px;
         padding: 8px 10px; min-height: 20px; selection-background-color: #2874A6;
     }
-    QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 1px solid #2874A6; }
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 1px solid #E4572E; }
     QComboBox::drop-down { border: 0; width: 26px; }
     QPushButton {
         background: #17365D; color: #FFFFFF; border: 1px solid #17365D;
         border-radius: 6px; padding: 8px 13px; min-height: 20px; font-weight: 600;
     }
-    QPushButton:hover { background: #2874A6; border-color: #2874A6; }
+    QPushButton:hover { background: #D94D2B; border-color: #D94D2B; }
     QPushButton:pressed { background: #102845; }
     QPushButton:disabled { background: #E5EAF0; color: #98A2B3; border-color: #E5EAF0; }
-    QPushButton[variant="secondary"] { background: #FFFFFF; color: #17365D; border-color: #D9E0E8; }
-    QPushButton[variant="secondary"]:hover { background: #EAF0F6; }
+    QPushButton[variant="secondary"] { background: rgba(255,255,255,210); color: #17365D; border-color: rgba(255,255,255,220); }
+    QPushButton[variant="secondary"]:hover { background: #FFF7F2; border-color: #E7B9A9; }
     QPushButton[variant="quiet"] { background: transparent; color: #FFFFFF; border-color: transparent; }
     QPushButton[variant="danger"] { background: #A93232; border-color: #A93232; }
     QPushButton[variant="danger"]:hover { background: #862626; border-color: #862626; }
     QTableWidget {
-        background: #FFFFFF; alternate-background-color: #F8FAFC; color: #243247;
-        border: 1px solid #D9E0E8; border-radius: 8px; gridline-color: #EDF1F5;
-        selection-background-color: #E1ECF5; selection-color: #17365D;
+        background: rgba(255,255,255,225); alternate-background-color: rgba(250,247,244,220); color: #243247;
+        border: 1px solid rgba(255,255,255,230); border-radius: 12px; gridline-color: #F0E8E3;
+        selection-background-color: #FCE3D9; selection-color: #49251C;
     }
     QTableWidget::item { padding: 8px; border-bottom: 1px solid #EDF1F5; }
     QHeaderView::section {
-        background: #EAF0F6; color: #17365D; padding: 10px; border: 0;
-        border-bottom: 1px solid #D9E0E8; font-weight: 700;
+        background: #F7EDE7; color: #49352D; padding: 11px; border: 0;
+        border-bottom: 1px solid #E8DCD5; font-weight: 700;
     }
     QDialogButtonBox QPushButton { min-width: 82px; }
     QFormLayout QLabel { color: #344054; font-weight: 600; }
@@ -84,7 +94,8 @@ DESIGN_STYLES = """
     QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
     QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
     #loginPanel { background: #FFFFFF; }
-    #brandingPanel, #sidebar { background: #17365D; }
+    #brandingPanel { background: #0C0D0F; }
+    #sidebar { background: #17191D; }
     #loginHeading { color: #17365D; font-size: 25pt; font-weight: 700; }
     #brandName { color: #FFFFFF; font-size: 18pt; font-weight: 700; }
     #welcomeText { color: #FFFFFF; font-size: 19pt; font-weight: 700; }
@@ -101,7 +112,7 @@ DESIGN_STYLES = """
         background: #2874A6; color: #FFFFFF; border-left: 3px solid #FFFFFF; font-weight: 700;
     }
     #logoutButton { background: #A93232; border-color: #A93232; }
-    #contentArea, #dashboardPage, QScrollArea { background: #F4F6F9; border: 0; }
+    #contentArea, #dashboardPage, QScrollArea { background: transparent; border: 0; }
     #pageHeading { color: #17365D; font-size: 19pt; font-weight: 700; }
     QLabel#userName { color: #17365D; font-size: 10pt; font-weight: 700; }
     QLabel#userRole { color: #667085; font-size: 9pt; }
@@ -109,19 +120,121 @@ DESIGN_STYLES = """
     #welcomeHeading { color: #17365D; font-size: 18pt; font-weight: 700; }
     #sectionHeading { color: #17365D; font-size: 16pt; font-weight: 700; }
     #statCard, #panelCard {
-        background: #FFFFFF; border: 1px solid #E3E8EF; border-radius: 10px; padding: 12px;
+        background: rgba(255,255,255,218); border: 1px solid rgba(255,255,255,235); border-radius: 18px; padding: 12px;
     }
     #cardTitle { color: #667085; font-size: 9pt; }
-    #cardValue { color: #17365D; font-size: 24pt; font-weight: 700; }
+    #cardValue { color: #252323; font-size: 24pt; font-weight: 750; }
     #panelHeading { color: #17365D; font-size: 12pt; font-weight: 700; }
     #panelDescription { color: #667085; font-size: 9pt; }
     #noticeSummary { color: #17365D; font-size: 13pt; font-weight: 700; }
-    #quickButton { background: #F0F5FA; color: #17365D; border-color: #D9E0E8; }
-    #quickButton:hover { background: #2874A6; color: #FFFFFF; }
-    #activityList { background: #F8FAFC; border: 1px solid #E3E8EF; border-radius: 7px; padding: 6px; }
-    #activityList::item { color: #344054; padding: 7px; border-bottom: 1px solid #E8EDF2; }
-    #activityList::item:selected { background: #EAF0F6; color: #17365D; }
+    #quickButton { background: rgba(255,255,255,215); color: #49352D; border-color: rgba(255,255,255,235); border-radius: 18px; }
+    #quickButton:hover { background: #FFF6F0; color: #49251C; border-color: #E7B9A9; }
+    #activityList { background: rgba(255,255,255,180); border: 1px solid rgba(255,255,255,230); border-radius: 12px; padding: 6px; }
+    #activityList::item { color: #344054; padding: 9px; border-bottom: 1px solid #EEE4DE; }
+    #activityList::item:hover { background: rgba(255,255,255,230); }
+    #activityList::item:selected { background: #FCE3D9; color: #49251C; }
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #E4572E; }
+    QTableWidget::item:hover:!selected { background: #FFF2EB; }
+    QPushButton#menuButton[active="true"] { background: #FFFFFF; color: #17365D; border-left: 3px solid #E4572E; }
+    QPushButton#menuButton[collapsed="true"] { text-align: center; padding-left: 0; padding-right: 0; }
+    QPushButton#menuButton[active="true"]:hover { background: #FFF8F4; color: #17365D; }
+    #statCard, #panelCard, #heroCard, #agendaCard { border-radius: 20px; }
+    #heroCard { background: #E4572E; border: 1px solid rgba(255,255,255,135); border-radius: 24px; }
+    #heroTitle { color: white; font-size: 20pt; font-weight: 750; }
+    #heroCopy { color: rgba(255,255,255,235); font-size: 10pt; }
+    #heroMeta { color: rgba(255,255,255,235); font-size: 9pt; }
+    #heroButton { background: #171615; color: white; border: 1px solid #171615; border-radius: 20px; }
+    #heroButton:hover { background: #302B29; border-color: #302B29; }
+    #heroButton[variant="secondary"] { background: rgba(255,255,255,36); color: white; border: 1px solid rgba(255,255,255,135); }
+    #heroButton[variant="secondary"]:hover { background: rgba(255,255,255,70); }
+    #primaryStat { background: #E4572E; border: 1px solid rgba(255,255,255,135); }
+    #primaryStat #cardTitle, #primaryStat #cardValue, #primaryStat QLabel { color: white; }
+    #primaryStat #panelDescription { color: rgba(255,255,255,225); }
+    #sidebar { border: 1px solid rgba(255,255,255,25); border-radius: 20px; }
+    #workspaceLabel { color: rgba(255,255,255,225); font-size: 9pt; }
+    #viewChip { background: rgba(255,255,255,190); border: 1px solid white; border-radius: 12px; padding: 3px 8px; }
+    #sidebarNavButton { background: transparent; color: #DCE6F0; border: 0; text-align: left; padding: 10px 12px; border-radius: 12px; }
+    #sidebarNavButton:hover { background: #292C31; color: white; }
+    #sidebarNavButton[active="true"] { background: #E4572E; color: #17191D; border-left: 3px solid #FFD7C9; font-weight: 700; }
+    #sidebarNavButton[collapsed="true"] { text-align: center; padding: 8px 0; }
+    #sidebarSection { color: rgba(255,255,255,155); font-size: 8pt; font-weight: 700; letter-spacing: 1px; }
+    #collapseHandle { background: white; color: #17365D; border: 1px solid #EFE5E0; border-radius: 15px; min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; padding: 0; }
+    #analyticsRange { background: rgba(255,255,255,185); border: 1px solid white; border-radius: 16px; padding: 2px; }
+    #analyticsRange QPushButton { background: transparent; color: #49352D; border: 0; border-radius: 14px; padding: 6px 12px; }
+    #analyticsRange QPushButton[active="true"] { background: #171615; color: white; }
+    #emptyState { color: #667085; background: rgba(255,255,255,130); border: 1px dashed #D8C8BF; border-radius: 12px; padding: 16px; }
+    #analyticsLoading { color: #7C4A3A; background: rgba(255,255,255,180); border-radius: 10px; padding: 6px 10px; }
+    QDialog { background: #F7F1ED; }
+    QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox { background: rgba(255,255,255,235); }
 """
+
+
+APP_STYLE_EXTRAS = """
+    QCheckBox:enabled:hover, QComboBox:enabled:hover, QSpinBox:enabled:hover { border-color: #A9B9CC; }
+    QTableWidget::item:hover:!selected, QListWidget::item:hover:!selected,
+    QHeaderView::section:hover, QMenu::item:selected { background: #EAF0F6; color: #17365D; }
+    #identityCard { background: #FFFFFF; border: 1px solid #E3E8EF; border-radius: 8px; padding: 5px 10px; }
+    #syncStatus { color: #52677F; background: #EAF0F6; border: 1px solid #D9E0E8;
+                  border-radius: 10px; padding: 5px 9px; font-size: 9pt; }
+    #appearanceToggle { border-radius: 16px; }
+    #analyticsLoading { color: #7C4A3A; background: rgba(255,255,255,180); border-radius: 10px; padding: 6px 10px; }
+    #analyticsProgress { border: 0; background: rgba(255,255,255,100); border-radius: 3px; max-height: 6px; }
+    #analyticsProgress::chunk { background: #E4572E; border-radius: 3px; }
+"""
+
+DARK_THEME_STYLES = """
+    QWidget { color: #EEE9E5; }
+    QMainWindow, QDialog { background: #1D1F23; }
+    QLineEdit, QComboBox, QSpinBox {
+        color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53;
+        selection-background-color: #E4572E; selection-color: white;
+    }
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border: 2px solid #F07858; }
+    QComboBox QAbstractItemView, QMenu { color: #F1ECE8; background: #292C31; border: 1px solid #4B4E53; }
+    QPushButton[variant="primary"] { color: white; background: #D94D2B; border-color: #D94D2B; }
+    QPushButton[variant="primary"]:hover { background: #EB6544; border-color: #EB6544; }
+    QPushButton[variant="secondary"] { color: #F1ECE8; background: #303338; border-color: #505258; }
+    QPushButton[variant="secondary"]:hover { color: white; background: #41444A; border-color: #666970; }
+    QPushButton:disabled { color: #898B90; background: #303237; border-color: #3D4045; }
+    QTableWidget { color: #EEE9E5; background: #25282D; alternate-background-color: #2B2E33;
+                   border-color: #484B51; gridline-color: #393C42; selection-background-color: #5A382F;
+                   selection-color: #FFF8F3; }
+    QTableWidget::item { border-bottom-color: #393C42; }
+    QTableWidget::item:hover:!selected, QListWidget::item:hover:!selected,
+    QHeaderView::section:hover, QMenu::item:selected { color: #FFF8F3; background: #383B40; }
+    QHeaderView::section { color: #F0E8E3; background: #303338; border-bottom-color: #4A4D52; }
+    QScrollBar:vertical, QScrollBar:horizontal { background: #23252A; }
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #55585E; }
+    #loginPanel { background: #25282D; }
+    #loginHeading, #pageHeading, #welcomeHeading, #sectionHeading, #panelHeading, #noticeSummary { color: #F4EDE8; }
+    #brandName, #welcomeText, #userName { color: #FFF8F3; }
+    #userRole, #panelDescription, #cardTitle { color: #B9B4B0; }
+    #inputField { color: #F1ECE8; background: #292C31; }
+    #contentArea, #dashboardPage, QScrollArea { background: transparent; }
+    #statCard, #panelCard { color: #EEE9E5; background: rgba(42,45,50,238); border-color: rgba(255,255,255,34); }
+    #cardValue { color: #F8F2EE; }
+    #primaryStat { background: #D94D2B; border-color: rgba(255,255,255,125); }
+    #primaryStat #cardTitle, #primaryStat #cardValue, #primaryStat QLabel { color: white; }
+    #heroCard { background: #D94D2B; border-color: rgba(255,255,255,130); }
+    #quickButton { color: #F0EAE6; background: #303338; border-color: #505258; }
+    #quickButton:hover { color: white; background: #41444A; }
+    #activityList { color: #EEE9E5; background: rgba(31,33,37,225); border-color: #494C52; }
+    #activityList::item { color: #EEE9E5; border-bottom-color: #393C42; }
+    #activityList::item:selected { color: white; background: #5A382F; }
+    #emptyState { color: #C6C0BC; background: rgba(31,33,37,200); border-color: #55585E; }
+    #identityCard { background: rgba(42,45,50,230); border-color: #4B4E53; }
+    #syncStatus { color: #D8D1CC; background: #303338; border-color: #505258; }
+    #analyticsLoading { color: #F2C2AF; background: #303338; }
+    #analyticsProgress { background: #44474D; }
+    #analyticsRange { background: #292C31; border-color: #505258; }
+    #analyticsRange QPushButton { color: #EEE9E5; }
+    #analyticsRange QPushButton[active="true"] { color: white; background: #111214; }
+    #brandingPanel { background: #0C0D0F; }
+"""
+
+
+def application_stylesheet(theme="light"):
+    return DESIGN_STYLES + APP_STYLE_EXTRAS + (DARK_THEME_STYLES if theme == "dark" else "")
 
 
 class PortalButton(QPushButton):
@@ -141,6 +254,152 @@ class PortalCard(QFrame):
         self.content_layout = QVBoxLayout(self)
         self.content_layout.setContentsMargins(16, 14, 16, 14)
         self.content_layout.setSpacing(10)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setColor(QColor(67, 42, 31, 36))
+        self._shadow.setOffset(0, 3)
+        self._shadow.setBlurRadius(0)
+        self.setGraphicsEffect(self._shadow)
+        self._hover_animation = QPropertyAnimation(self._shadow, b"blurRadius", self)
+        self._hover_animation.setDuration(150)
+        self._hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def enterEvent(self, event):
+        self._animate_shadow(13)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._animate_shadow(0)
+        super().leaveEvent(event)
+
+    def _animate_shadow(self, radius):
+        self._hover_animation.stop()
+        self._hover_animation.setStartValue(self._shadow.blurRadius())
+        self._hover_animation.setEndValue(radius)
+        self._hover_animation.start()
+
+
+class WarmCanvas(QFrame):
+    """Paint a restrained warm backdrop beneath translucent portal surfaces."""
+
+    def __init__(self, dark=False, parent=None):
+        super().__init__(parent)
+        self.dark = bool(dark)
+
+    def set_dark(self, dark):
+        self.dark = bool(dark)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#202126" if self.dark else "#F2E8E2"))
+        for center, radius, color in (
+            (QPointF(self.width() * .13, self.height() * .12), self.width() * .66,
+             QColor(229, 119, 82, 31 if self.dark else 45)),
+            (QPointF(self.width() * .92, self.height() * .12), self.width() * .62,
+             QColor(191, 117, 99, 25 if self.dark else 36)),
+            (QPointF(self.width() * .63, self.height() * .94), self.width() * .76,
+             QColor(255, 228, 207, 24 if self.dark else 95)),
+        ):
+            gradient = QRadialGradient(center, max(1, radius))
+            gradient.setColorAt(0, color)
+            gradient.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0))
+            painter.fillRect(self.rect(), gradient)
+        painter.end()
+        super().paintEvent(event)
+
+
+class ProgressRing(QWidget):
+    """Small animated ring whose value comes from the current portal snapshot."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.progress = 0.0
+        self.animation = QVariantAnimation(self)
+        self.animation.setDuration(650)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.valueChanged.connect(self._set_animated_value)
+        self.setMinimumSize(98, 98)
+        self.setMaximumSize(118, 118)
+        self.setAccessibleName("Average lesson completion")
+
+    def set_value(self, value):
+        value = max(0, min(100, float(value)))
+        if abs(value - self.progress) < .1:
+            return
+        self.animation.stop()
+        self.animation.setStartValue(self.progress)
+        self.animation.setEndValue(value)
+        self.animation.start()
+
+    def _set_animated_value(self, value):
+        self.progress = float(value)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bounds = self.rect().adjusted(8, 8, -8, -8)
+        pen = QPen(QColor(255, 255, 255, 85), 7)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(bounds, 90 * 16, -360 * 16)
+        pen.setColor(QColor("#FFFFFF"))
+        painter.setPen(pen)
+        painter.drawArc(bounds, 90 * 16, -int(360 * self.progress * 16 / 100))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        painter.drawText(self.rect().adjusted(0, -2, 0, -2), Qt.AlignmentFlag.AlignCenter,
+                         f"{round(self.progress)}%")
+        painter.end()
+
+
+class AnimatedDialog(QDialog):
+    """Short fade for existing modal forms without changing their result flow."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(1)
+        self.setGraphicsEffect(self._opacity)
+        self._fade = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._fade.setDuration(135)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._pending_result = None
+
+    def showEvent(self, event):
+        self._opacity.setOpacity(0)
+        self._fade.stop()
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+        self._fade.start()
+        super().showEvent(event)
+
+    def accept(self):
+        self._finish_with_fade(QDialog.DialogCode.Accepted)
+
+    def reject(self):
+        self._finish_with_fade(QDialog.DialogCode.Rejected)
+
+    def _finish_with_fade(self, result):
+        if not self.isVisible():
+            QDialog.done(self, result)
+            return
+        self._fade.stop()
+        self._pending_result = result
+        self._fade.setStartValue(self._opacity.opacity())
+        self._fade.setEndValue(0.0)
+        try:
+            self._fade.finished.disconnect(self._finish_close)
+        except TypeError:
+            pass
+        self._fade.finished.connect(self._finish_close)
+        self._fade.start()
+
+    def _finish_close(self):
+        if self._pending_result is not None:
+            result, self._pending_result = self._pending_result, None
+            QDialog.done(self, result)
 
 
 def cap_badge(size):
@@ -167,6 +426,47 @@ def cap_badge(size):
     label.setFixedSize(size, size)
     label.setAccessibleName("University Student Learning Portal logo")
     return label
+
+
+def sidebar_icon(kind, color="#E5EDF5"):
+    """Draw a small, consistent navigation glyph without an added icon package."""
+    image = QPixmap(48, 48)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), 3.2, Qt.PenStyle.SolidLine,
+               Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if kind == "dashboard":
+        for x, y in ((9, 9), (26, 9), (9, 26), (26, 26)):
+            painter.drawRoundedRect(x, y, 12, 12, 3, 3)
+    elif kind == "students":
+        painter.drawEllipse(17, 7, 14, 14)
+        painter.drawArc(9, 23, 30, 23, 0, 180 * 16)
+        painter.drawLine(12, 37, 36, 37)
+    elif kind == "courses":
+        painter.drawRoundedRect(8, 9, 32, 30, 4, 4)
+        painter.drawLine(24, 10, 24, 38)
+        painter.drawLine(13, 16, 19, 16)
+        painter.drawLine(29, 16, 35, 16)
+    elif kind == "enrollments":
+        for y in (12, 23, 34):
+            painter.drawRoundedRect(8, y - 4, 7, 7, 2, 2)
+            painter.drawLine(21, y, 39, y)
+    elif kind == "analytics":
+        painter.drawLine(9, 39, 39, 39)
+        painter.drawLine(11, 37, 11, 26)
+        painter.drawLine(21, 37, 21, 18)
+        painter.drawLine(31, 37, 31, 10)
+        painter.drawLine(39, 37, 39, 23)
+    elif kind == "logout":
+        painter.drawRoundedRect(8, 8, 20, 32, 3, 3)
+        painter.drawLine(21, 24, 40, 24)
+        painter.drawLine(33, 17, 40, 24)
+        painter.drawLine(33, 31, 40, 24)
+    painter.end()
+    return QIcon(image)
 
 
 class LoginPage(QWidget):
@@ -323,7 +623,7 @@ class LoginPage(QWidget):
         main_layout.addWidget(branding_panel, 42)
         main_layout.addWidget(login_panel, 42)
 
-class RecordForm(QDialog):
+class RecordForm(AnimatedDialog):
     """Build a labelled form. Each dropdown retains the database ID of its selection."""
 
     def __init__(self, parent, title):
@@ -383,7 +683,7 @@ class RecordForm(QDialog):
         return result
 
 
-class StudentProfileDialog(QDialog):
+class StudentProfileDialog(AnimatedDialog):
     """Read-only profile assembled only from the authenticated snapshot."""
 
     def __init__(self, parent, student, enrollments):
@@ -445,7 +745,7 @@ class AuditLogTask(QRunnable):
         self.signals.finished.emit(result)
 
 
-class AuditLogDialog(QDialog):
+class AuditLogDialog(AnimatedDialog):
     """Paginated database audit history, with session-only preview data."""
 
     PAGE_SIZE = 50
@@ -667,8 +967,13 @@ class EnrollmentChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.counts = [0, 0, 0]
+        self.dark = False
         self.setMinimumHeight(155)
         self.setAccessibleName("Enrolment status chart")
+
+    def set_dark(self, dark):
+        self.dark = bool(dark)
+        self.update()
 
     def set_records(self, records):
         totals = {"enrolled": 0, "active": 0, "completed": 0, "withdrawn": 0}
@@ -690,19 +995,19 @@ class EnrollmentChart(QWidget):
         row_height = 43
         for index, label in enumerate(self.LABELS):
             y = 8 + index * row_height
-            painter.setPen(QColor("#52677F"))
+            painter.setPen(QColor("#C6C0BC" if self.dark else "#52677F"))
             painter.drawText(0, y + 19, label)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#EDF1F6"))
+            painter.setBrush(QColor("#45484E" if self.dark else "#EDF1F6"))
             painter.drawRoundedRect(bar_x, y + 4, bar_width, 14, 7, 7)
             amount = self.counts[index]
             if amount and maximum:
                 painter.setBrush(self.COLORS[index])
                 painter.drawRoundedRect(bar_x, y + 4, max(7, int(bar_width * amount / maximum)), 14, 7, 7)
-            painter.setPen(QColor("#243247"))
+            painter.setPen(QColor("#F1ECE8" if self.dark else "#243247"))
             painter.drawText(bar_x + bar_width + 8, y + 17, str(amount))
         if maximum == 0:
-            painter.setPen(QColor("#667085"))
+            painter.setPen(QColor("#C6C0BC" if self.dark else "#667085"))
             painter.drawText(bar_x, 8 + len(self.LABELS) * row_height + 2, "No enrolment data yet")
         painter.end()
 
@@ -716,7 +1021,12 @@ class BreakdownChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.items = []
+        self.dark = False
         self.setMinimumHeight(120)
+
+    def set_dark(self, dark):
+        self.dark = bool(dark)
+        self.update()
 
     def set_data(self, values):
         ranked = sorted(((str(label), int(count)) for label, count in values.items() if count > 0),
@@ -731,7 +1041,7 @@ class BreakdownChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if not self.items:
-            painter.setPen(QColor("#667085"))
+            painter.setPen(QColor("#C6C0BC" if self.dark else "#667085"))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No records in this snapshot")
             painter.end()
             return
@@ -742,21 +1052,21 @@ class BreakdownChart(QWidget):
         maximum = max(value for _label, value in self.items)
         for index, (label, value) in enumerate(self.items):
             y = 6 + index * 34
-            painter.setPen(QColor("#52677F"))
+            painter.setPen(QColor("#C6C0BC" if self.dark else "#52677F"))
             painter.drawText(0, y, label_width - 8, 22, Qt.AlignmentFlag.AlignVCenter,
                              self.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, label_width - 8))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#EDF1F6"))
+            painter.setBrush(QColor("#45484E" if self.dark else "#EDF1F6"))
             painter.drawRoundedRect(bar_x, y + 4, bar_width, 14, 7, 7)
             painter.setBrush(self.COLORS[index % len(self.COLORS)])
             painter.drawRoundedRect(bar_x, y + 4, max(7, int(bar_width * value / maximum)), 14, 7, 7)
-            painter.setPen(QColor("#243247"))
+            painter.setPen(QColor("#F1ECE8" if self.dark else "#243247"))
             painter.drawText(bar_x + bar_width + 6, y, value_width - 6, 22,
                              Qt.AlignmentFlag.AlignVCenter, str(value))
         painter.end()
 
 
-class DashboardReportDialog(QDialog):
+class DashboardReportDialog(AnimatedDialog):
     """Small report of counts that are present in the current authorized snapshot."""
 
     def __init__(self, parent, portal):
@@ -808,8 +1118,10 @@ class DashboardPage(QWidget):
         self.portal = portal
         self.user = portal.user.copy()
         self.initial_actions = portal.actions.copy()
+        self.theme_mode = str(QApplication.instance().property("uslpTheme") or "light")
         self.activities = []
         self.tables, self.searches, self.status_filters, self.quick_buttons = {}, {}, {}, {}
+        self.empty_states = {}
         self.audit_events = []
         self.recent_audit_entries = []
         self.activity_task = None
@@ -823,7 +1135,10 @@ class DashboardPage(QWidget):
             "Students" if staff else "My students" if self.lecturer else "My profile",
             "Courses" if staff else "My courses",
             "Enrolments" if staff else "My enrolments",
+            "Analytics",
         ]
+        self.sidebar_expanded = False
+        self.sidebar_target_expanded = False
         self.revision = 0
         self.pending = None
         self.pending_action = None
@@ -842,31 +1157,76 @@ class DashboardPage(QWidget):
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
         sidebar = QFrame()
+        self.sidebar = sidebar
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(232)
+        sidebar.setFixedWidth(72)
         nav = QVBoxLayout(sidebar)
-        nav.setContentsMargins(18, 25, 18, 20)
+        nav.setContentsMargins(12, 18, 12, 16)
+        nav.setSpacing(7)
         brand = QHBoxLayout()
         brand.addWidget(cap_badge(36))
-        logo = QLabel("USLP")
-        logo.setObjectName("sidebarLogo")
-        brand.addWidget(logo)
+        self.brand_title = QLabel("USLP")
+        self.brand_title.setObjectName("sidebarLogo")
+        self.brand_title.hide()
+        brand.addWidget(self.brand_title)
         brand.addStretch()
         nav.addLayout(brand)
-        nav.addSpacing(20)
-        for i, title in enumerate(self.names):
+        nav.addSpacing(18)
+        main_section = QLabel("MAIN")
+        main_section.setObjectName("sidebarSection")
+        main_section.hide()
+        nav.addWidget(main_section)
+        self.main_section_label = main_section
+        self.nav_kinds = ("dashboard", "students", "courses", "enrollments", "analytics")
+        self.menu_page_indices = []
+        nav_order = (0, 4, 1, 2, 3)
+        for page_index in nav_order:
+            title = self.names[page_index]
             button = PortalButton(title, "quiet")
-            button.setObjectName("menuButton")
-            button.clicked.connect(lambda checked=False, idx=i: self.open_page(idx))
+            button.setObjectName("sidebarNavButton")
+            button.setAccessibleName(title)
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            kind = self.nav_kinds[page_index]
+            button.setIcon(sidebar_icon(kind))
+            button.setIconSize(QSize(20, 20))
+            button.setToolTip(title)
+            button.setProperty("collapsed", True)
+            button.setProperty("active", False)
+            button.setText("")
+            button.clicked.connect(lambda checked=False, idx=page_index: self.open_page(idx))
             nav.addWidget(button)
             self.menu_buttons.append(button)
+            self.menu_page_indices.append(page_index)
+            if page_index == 4:
+                records_section = QLabel("RECORDS")
+                records_section.setObjectName("sidebarSection")
+                records_section.hide()
+                nav.addWidget(records_section)
+                self.records_section_label = records_section
         nav.addStretch()
         logout = PortalButton("Exit preview" if self.portal.preview else "Logout", "danger")
-        logout.setObjectName("logoutButton")
+        self.logout_button = logout
+        logout.setObjectName("sidebarNavButton")
+        logout.setIcon(sidebar_icon("logout"))
+        logout.setIconSize(QSize(20, 20))
+        logout.setAccessibleName("Exit preview" if self.portal.preview else "Log out")
+        logout.setToolTip(logout.accessibleName())
+        logout.setText("")
+        logout.setProperty("collapsed", True)
         logout.clicked.connect(self.logout_requested.emit)
         nav.addWidget(logout)
-
-        panel = QFrame()
+        self.collapse_timer = QTimer(self)
+        self.collapse_timer.setSingleShot(True)
+        self.collapse_timer.setInterval(170)
+        self.collapse_timer.timeout.connect(self._collapse_sidebar_if_outside)
+        self.sidebar_animation = QVariantAnimation(self)
+        self.sidebar_animation.setDuration(230)
+        self.sidebar_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.sidebar_animation.valueChanged.connect(lambda width: self.sidebar.setFixedWidth(int(width)))
+        self.sidebar_animation.finished.connect(self._finish_sidebar_animation)
+        for widget in [sidebar, *sidebar.findChildren(QWidget)]:
+            widget.installEventFilter(self)
+        panel = WarmCanvas(dark=self.theme_mode == "dark")
         panel.setObjectName("contentArea")
         content = QVBoxLayout(panel)
         content.setContentsMargins(30, 22, 30, 24)
@@ -877,14 +1237,26 @@ class DashboardPage(QWidget):
         bar.addWidget(self.heading)
         bar.addStretch()
         self.global_search = QLineEdit()
-        self.global_search.setMaximumWidth(300)
-        self.global_search.setPlaceholderText("Search loaded records…")
+        self.global_search.setMaximumWidth(230)
+        self.global_search.setPlaceholderText("Search loaded records · Ctrl+K")
         self.global_search.setAccessibleName("Search loaded student, course and enrolment records")
         self.global_search.returnPressed.connect(self.search_records)
+        self.search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self.search_shortcut.activated.connect(self.global_search.setFocus)
         bar.addWidget(self.global_search)
+        self.appearance_toggle = PortalButton(
+            "◐ Light mode" if self.theme_mode == "dark" else "◐ Dark mode", "secondary"
+        )
+        self.appearance_toggle.setObjectName("appearanceToggle")
+        self.appearance_toggle.setAccessibleName(
+            "Switch to light mode" if self.theme_mode == "dark" else "Switch to dark mode"
+        )
+        self.appearance_toggle.clicked.connect(self.toggle_theme)
+        bar.addWidget(self.appearance_toggle)
         self.sync_label = QLabel("Offline preview · changes stay in this window" if self.portal.preview else "")
         self.sync_label.setObjectName("syncStatus")
         self.sync_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.sync_label.setMaximumWidth(175)
         bar.addWidget(self.sync_label)
         identity = QVBoxLayout()
         for value, style in [(self.user["name"], "userName"), (" · ".join(self.user["roles"]), "userRole")]:
@@ -893,6 +1265,7 @@ class DashboardPage(QWidget):
             lab.setObjectName(style)
             identity.addWidget(lab)
         identity_widget = QWidget()
+        identity_widget.setMaximumWidth(155)
         identity_widget.setObjectName("identityCard")
         identity_widget.setLayout(identity)
         bar.addWidget(identity_widget)
@@ -902,13 +1275,103 @@ class DashboardPage(QWidget):
         divider.setFixedHeight(1)
         content.addWidget(divider)
         self.pages = QStackedWidget()
-        self.pages.addWidget(self.dashboard())
+        self.dashboard_widget = self.dashboard()
+        self.pages.addWidget(self.dashboard_widget)
+        self.record_page_widgets = {}
         for idx, key in enumerate(HEADERS, 1):
-            self.pages.addWidget(self.record_page(key, self.names[idx]))
+            record_page = self.record_page(key, self.names[idx])
+            self.record_page_widgets[key] = record_page
+            self.pages.addWidget(record_page)
+        self.analytics_widget = self.analytics_page()
+        self.analytics_index = self.pages.addWidget(self.analytics_widget)
+        self.page_effects = {}
+        self.page_fade = None
         content.addWidget(self.pages)
         main.addWidget(sidebar)
         main.addWidget(panel)
         self.show_page(0)
+
+    def toggle_theme(self):
+        self.theme_mode = "dark" if self.theme_mode == "light" else "light"
+        app = QApplication.instance()
+        app.setProperty("uslpTheme", self.theme_mode)
+        app.setStyleSheet(application_stylesheet(self.theme_mode))
+        QSettings("USLP", "StudentLearningPortal").setValue("appearance", self.theme_mode)
+        for canvas in self.findChildren(WarmCanvas):
+            canvas.set_dark(self.theme_mode == "dark")
+        for chart in (self.enrollment_chart, self.analytics_enrollment_chart,
+                      self.programme_chart, self.student_status_chart,
+                      self.semester_chart, self.analytics_distribution_chart):
+            chart.set_dark(self.theme_mode == "dark")
+        if self.theme_mode == "dark":
+            self.appearance_toggle.setText("◐ Light mode")
+            self.appearance_toggle.setAccessibleName("Switch to light mode")
+        else:
+            self.appearance_toggle.setText("◐ Dark mode")
+            self.appearance_toggle.setAccessibleName("Switch to dark mode")
+
+    def eventFilter(self, watched, event):
+        if watched is self.sidebar or self.sidebar.isAncestorOf(watched):
+            if event.type() in (QEvent.Type.Enter, QEvent.Type.FocusIn):
+                self.collapse_timer.stop()
+                self.set_sidebar_expanded(True)
+            elif event.type() in (QEvent.Type.Leave, QEvent.Type.FocusOut):
+                self.collapse_timer.start()
+        return super().eventFilter(watched, event)
+
+    def set_sidebar_expanded(self, expanded):
+        expanded = bool(expanded)
+        if expanded == self.sidebar_target_expanded and self.sidebar_animation.state() == QVariantAnimation.State.Running:
+            return
+        if expanded == self.sidebar_expanded and self.sidebar_animation.state() != QVariantAnimation.State.Running:
+            return
+        self.sidebar_target_expanded = expanded
+        if expanded:
+            self.brand_title.show()
+            self.main_section_label.show()
+            self.records_section_label.show()
+            for button, page_index in zip(self.menu_buttons, self.menu_page_indices):
+                title = self.names[page_index]
+                button.setText(title)
+                button.setToolTip("")
+                button.setProperty("collapsed", False)
+                button.style().unpolish(button)
+                button.style().polish(button)
+            self.logout_button.setText(self.logout_button.accessibleName())
+            self.logout_button.setToolTip("")
+            self.logout_button.setProperty("collapsed", False)
+            self.logout_button.style().unpolish(self.logout_button)
+            self.logout_button.style().polish(self.logout_button)
+        self.sidebar_animation.stop()
+        self.sidebar_animation.setStartValue(self.sidebar.width())
+        self.sidebar_animation.setEndValue(232 if expanded else 72)
+        self.sidebar_animation.start()
+
+    def _finish_sidebar_animation(self):
+        self.sidebar_expanded = self.sidebar_target_expanded
+        if self.sidebar_expanded:
+            return
+        self.brand_title.hide()
+        self.main_section_label.hide()
+        self.records_section_label.hide()
+        for button in self.menu_buttons:
+            button.setText("")
+            button.setToolTip(button.accessibleName())
+            button.setProperty("collapsed", True)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.logout_button.setText("")
+        self.logout_button.setToolTip(self.logout_button.accessibleName())
+        self.logout_button.setProperty("collapsed", True)
+        self.logout_button.style().unpolish(self.logout_button)
+        self.logout_button.style().polish(self.logout_button)
+
+    def _collapse_sidebar_if_outside(self):
+        pointer_inside = self.sidebar.rect().contains(self.sidebar.mapFromGlobal(QCursor.pos()))
+        focus = QApplication.focusWidget()
+        focus_inside = bool(focus and (focus is self.sidebar or self.sidebar.isAncestorOf(focus)))
+        if not pointer_inside and not focus_inside:
+            self.set_sidebar_expanded(False)
 
     def dashboard(self):
         page = QFrame()
@@ -933,6 +1396,43 @@ class DashboardPage(QWidget):
             demo_note.setObjectName("noticeSummary")
             lay.addWidget(demo_note)
 
+        hero = PortalCard("heroCard")
+        hero_row = QHBoxLayout()
+        hero_row.setSpacing(20)
+        hero_copy = QVBoxLayout()
+        self.hero_title = QLabel("Your academic progress at a glance" if not staff
+                                 else "Academic records at a glance")
+        self.hero_title.setObjectName("heroTitle")
+        self.hero_title.setWordWrap(True)
+        hero_copy.addWidget(self.hero_title)
+        self.hero_description = QLabel(
+            "See your current courses, enrolments and recorded lesson progress."
+            if not staff else "Review the records and activity currently available to your account."
+        )
+        self.hero_description.setObjectName("heroCopy")
+        self.hero_description.setWordWrap(True)
+        hero_copy.addWidget(self.hero_description)
+        self.hero_progress_label = QLabel("Lesson completion is not available in this snapshot.")
+        self.hero_progress_label.setObjectName("heroMeta")
+        self.hero_progress_label.setWordWrap(True)
+        hero_copy.addWidget(self.hero_progress_label)
+        hero_actions = QHBoxLayout()
+        analytics_action = PortalButton("View analytics")
+        analytics_action.setObjectName("heroButton")
+        analytics_action.clicked.connect(lambda: self.open_page(self.analytics_index))
+        enrolments_action = PortalButton("Open enrolments", "secondary")
+        enrolments_action.setObjectName("heroButton")
+        enrolments_action.clicked.connect(lambda: self.open_page(3))
+        hero_actions.addWidget(analytics_action)
+        hero_actions.addWidget(enrolments_action)
+        hero_actions.addStretch()
+        hero_copy.addLayout(hero_actions)
+        hero_row.addLayout(hero_copy, 1)
+        self.hero_ring = ProgressRing()
+        hero_row.addWidget(self.hero_ring, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hero.content_layout.addLayout(hero_row)
+        lay.addWidget(hero)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         self.stats = []
@@ -944,7 +1444,7 @@ class DashboardPage(QWidget):
         else:
             labels = ["Student ID", "My courses", "My enrolments", "Completed enrolments"]
         for i, title in enumerate(labels):
-            card = PortalCard("statCard")
+            card = PortalCard("primaryStat" if i == 0 else "statCard")
             box = card.content_layout
             caption = QLabel(title)
             caption.setObjectName("cardTitle")
@@ -1088,6 +1588,163 @@ class DashboardPage(QWidget):
         scroll.setWidget(page)
         return scroll
 
+    def analytics_page(self):
+        page = QFrame()
+        page.setObjectName("dashboardPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(2, 16, 2, 18)
+        layout.setSpacing(14)
+        header = QHBoxLayout()
+        title = QLabel("Analytics")
+        title.setObjectName("welcomeHeading")
+        header.addWidget(title)
+        header.addStretch()
+        download = PortalButton("Download report", "secondary")
+        download.clicked.connect(self.export_report)
+        header.addWidget(download)
+        layout.addLayout(header)
+        note = QLabel("Explore counts calculated from records currently available to your account.")
+        note.setObjectName("panelDescription")
+        layout.addWidget(note)
+        loading_row = QHBoxLayout()
+        self.analytics_loading = QLabel("Refreshing analytics from the current portal snapshot…")
+        self.analytics_loading.setObjectName("analyticsLoading")
+        self.analytics_loading.hide()
+        self.analytics_progress = QProgressBar()
+        self.analytics_progress.setRange(0, 0)
+        self.analytics_progress.setTextVisible(False)
+        self.analytics_progress.setFixedWidth(120)
+        self.analytics_progress.setObjectName("analyticsProgress")
+        self.analytics_progress.hide()
+        loading_row.addWidget(self.analytics_loading)
+        loading_row.addWidget(self.analytics_progress)
+        loading_row.addStretch()
+        layout.addLayout(loading_row)
+
+        self.analytics_stats = []
+        stat_row = QGridLayout()
+        stat_row.setHorizontalSpacing(10)
+        for column, label_text in enumerate(("Students", "Active lecturers", "Courses", "Enrolments")):
+            card = PortalCard("primaryStat" if column == 0 else "statCard")
+            label = QLabel(label_text)
+            label.setObjectName("cardTitle")
+            value = QLabel("—")
+            value.setObjectName("cardValue")
+            hint = QLabel("Current snapshot")
+            hint.setObjectName("panelDescription")
+            card.content_layout.addWidget(label)
+            card.content_layout.addWidget(value)
+            card.content_layout.addWidget(hint)
+            stat_row.addWidget(card, 0, column)
+            self.analytics_stats.append((value, hint))
+        layout.addLayout(stat_row)
+
+        distribution_card = PortalCard("panelCard")
+        distribution_header = QHBoxLayout()
+        distribution_title = QLabel("Record distribution")
+        distribution_title.setObjectName("panelHeading")
+        distribution_header.addWidget(distribution_title)
+        distribution_header.addStretch()
+        self.analytics_mode_buttons = {}
+        segment = QWidget()
+        segment.setObjectName("analyticsRange")
+        segment_layout = QHBoxLayout(segment)
+        segment_layout.setContentsMargins(3, 3, 3, 3)
+        segment_layout.setSpacing(2)
+        for mode, text in (("programmes", "Programmes"), ("statuses", "Student status"),
+                           ("semesters", "Semesters")):
+            button = PortalButton(text, "secondary")
+            button.setObjectName("analyticsModeButton")
+            button.setProperty("active", mode == "programmes")
+            button.clicked.connect(lambda checked=False, current=mode: self.set_analytics_mode(current))
+            segment_layout.addWidget(button)
+            self.analytics_mode_buttons[mode] = button
+        distribution_header.addWidget(segment)
+        distribution_card.content_layout.addLayout(distribution_header)
+        self.analytics_distribution_chart = BreakdownChart()
+        distribution_card.content_layout.addWidget(self.analytics_distribution_chart)
+        distribution_note = QLabel("Charts use the loaded student and enrolment records; they do not imply a date range.")
+        distribution_note.setObjectName("panelDescription")
+        distribution_note.setWordWrap(True)
+        distribution_card.content_layout.addWidget(distribution_note)
+        layout.addWidget(distribution_card)
+
+        lower = QGridLayout()
+        lower.setHorizontalSpacing(14)
+        enrolment_card = PortalCard("panelCard")
+        enrolment_title = QLabel("Enrolment status")
+        enrolment_title.setObjectName("panelHeading")
+        enrolment_card.content_layout.addWidget(enrolment_title)
+        self.analytics_enrollment_chart = EnrollmentChart()
+        enrolment_card.content_layout.addWidget(self.analytics_enrollment_chart)
+        lower.addWidget(enrolment_card, 0, 0)
+        progress_card = PortalCard("panelCard")
+        progress_title = QLabel("Academic progress")
+        progress_title.setObjectName("panelHeading")
+        progress_card.content_layout.addWidget(progress_title)
+        self.analytics_academic_summary = QLabel()
+        self.analytics_academic_summary.setObjectName("noticeSummary")
+        self.analytics_academic_summary.setWordWrap(True)
+        progress_card.content_layout.addWidget(self.analytics_academic_summary)
+        progress_note = QLabel("Assessment grades are not included in the current API snapshot.")
+        progress_note.setObjectName("panelDescription")
+        progress_note.setWordWrap(True)
+        progress_card.content_layout.addWidget(progress_note)
+        lower.addWidget(progress_card, 0, 1)
+        layout.addLayout(lower)
+        layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(page)
+        return scroll
+
+    def set_analytics_mode(self, mode):
+        if mode not in {"programmes", "statuses", "semesters"}:
+            return
+        self.analytics_mode = mode
+        for key, button in self.analytics_mode_buttons.items():
+            button.setProperty("active", key == mode)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self._update_analytics_chart()
+
+    def _update_analytics_chart(self):
+        if not hasattr(self, "analytics_distribution_chart"):
+            return
+        students = list(self.portal.students.values())
+        enrollments = list(self.portal.enrollments.values())
+        values = {
+            "programmes": Counter(s.programme or "Unspecified" for s in students),
+            "statuses": Counter(s.status.title() or "Unspecified" for s in students),
+            "semesters": Counter(e.term or "Unspecified" for e in enrollments),
+        }
+        self.analytics_distribution_chart.set_data(values.get(getattr(self, "analytics_mode", "programmes"), {}))
+
+    def export_report(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Download snapshot report", "uslp-summary.csv", "CSV files (*.csv)")
+        if not path:
+            return
+        lecturers = self.portal.lookups.get("lecturers")
+        students = list(self.portal.students.values())
+        courses = list(self.portal.courses.values())
+        enrollments = list(self.portal.enrollments.values())
+        rows = [
+            ("Measure", "Value"),
+            ("Students in snapshot", len(students)),
+            ("Active students", sum(s.status.casefold() == "active" for s in students)),
+            ("Active lecturers", len(lecturers) if lecturers is not None else "Not available"),
+            ("Courses in snapshot", len(courses)),
+            ("Enrolments in snapshot", len(enrollments)),
+            ("Completed enrolments", sum(e.status.casefold() == "completed" for e in enrollments)),
+        ]
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as output:
+                csv.writer(output).writerows(rows)
+        except OSError as error:
+            QMessageBox.warning(self, "Report", f"The report could not be saved: {error}")
+            return
+        QMessageBox.information(self, "Report", "The snapshot summary was saved.")
+
     def record_page(self, key, title):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1108,6 +1765,13 @@ class DashboardPage(QWidget):
             status_filter.addItem("Inactive", "inactive")
             search_bar.addWidget(status_filter)
         layout.addLayout(search_bar)
+        empty_state = QLabel()
+        empty_state.setObjectName("emptyState")
+        empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_state.setWordWrap(True)
+        empty_state.hide()
+        layout.addWidget(empty_state)
+        self.empty_states[key] = empty_state
         table = QTableWidget(0, len(HEADERS[key]))
         table.setMouseTracking(True)
         table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -1215,6 +1879,30 @@ class DashboardPage(QWidget):
             + (f"Average lesson completion: {average_progress}% across {len(measurable)} records."
                if measurable else "Lesson completion totals are unavailable for these enrolments.")
         )
+        if measurable:
+            self.hero_ring.show()
+            self.hero_ring.set_value(average_progress)
+            self.hero_progress_label.setText(
+                f"Average lesson completion: {average_progress}% across {len(measurable)} enrolments."
+            )
+        else:
+            self.hero_ring.hide()
+            self.hero_progress_label.setText("Lesson totals are not available in the current records.")
+        analytics_values = [len(students), len(active_lecturers) if active_lecturers is not None else "—",
+                            len(courses), len(enrollments)]
+        analytics_hints = ["Records in your account scope",
+                           "Active lecturer records" if active_lecturers is not None else "Not available to this account",
+                           "Records in your account scope", "Records in your account scope"]
+        for (value_label, hint_label), value, hint in zip(self.analytics_stats, analytics_values, analytics_hints):
+            value_label.setText(str(value))
+            hint_label.setText(hint)
+        self.analytics_enrollment_chart.set_records(enrollments)
+        self.analytics_academic_summary.setText(
+            f"{completed} of {len(enrollments)} enrolments completed. "
+            + (f"Average recorded lesson completion is {average_progress}%."
+               if measurable else "No measurable lesson totals are available.")
+        )
+        self._update_analytics_chart()
 
         checks = []
         inactive = sum(s.status.casefold() != "active" for s in students)
@@ -1328,6 +2016,7 @@ class DashboardPage(QWidget):
     def filter_table(self, key, value):
         table = self.tables[key]
         query = value.casefold().strip()
+        visible_rows = 0
         for i in range(table.rowCount()):
             cells = [table.item(i, j).text() for j in range(table.columnCount()) if table.item(i, j)]
             matches_query = query in " ".join(cells).casefold()
@@ -1337,7 +2026,18 @@ class DashboardPage(QWidget):
                 or status_filter.currentData() == "all"
                 or (table.item(i, 4) and table.item(i, 4).text().casefold() == status_filter.currentData())
             )
-            table.setRowHidden(i, not (matches_query and matches_status))
+            visible = matches_query and matches_status
+            table.setRowHidden(i, not visible)
+            visible_rows += int(visible)
+        empty = self.empty_states.get(key)
+        if empty is not None:
+            singular = {"students": "student", "courses": "course", "enrollments": "enrolment"}[key]
+            empty.setText(
+                f"No {singular} records are available in this account's snapshot."
+                if table.rowCount() == 0 else
+                f"No {singular} records match the current search or filters."
+            )
+            empty.setVisible(visible_rows == 0)
 
     def view_selected_student(self):
         try:
@@ -1394,10 +2094,34 @@ class DashboardPage(QWidget):
         }
 
     def show_page(self, index):
+        if not 0 <= index < self.pages.count():
+            return
+        changed_page = self.pages.currentIndex() != index
+        if changed_page:
+            page = self.pages.widget(index)
+            effect = self.page_effects.get(index)
+            if effect is None:
+                effect = QGraphicsOpacityEffect(page)
+                page.setGraphicsEffect(effect)
+                self.page_effects[index] = effect
+            if self.page_fade is not None:
+                self.page_fade.stop()
+                self.page_fade.setTargetObject(effect)
+            effect.setOpacity(0.0)
         self.pages.setCurrentIndex(index)
+        if changed_page:
+            if self.page_fade is None:
+                self.page_fade = QPropertyAnimation(effect, b"opacity", self)
+                self.page_fade.setDuration(145)
+                self.page_fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.page_fade.setStartValue(0.0)
+            self.page_fade.setEndValue(1.0)
+            self.page_fade.start()
         self.heading.setText(self.names[index])
-        for i, button in enumerate(self.menu_buttons):
-            button.setProperty("active", i == index)
+        for button, page_index in zip(self.menu_buttons, self.menu_page_indices):
+            button.setProperty("active", page_index == index)
+            button.setIcon(sidebar_icon(self.nav_kinds[page_index],
+                                        "#17191D" if page_index == index else "#E5EDF5"))
             button.style().unpolish(button)
             button.style().polish(button)
 
@@ -1405,8 +2129,14 @@ class DashboardPage(QWidget):
         self.show_page(index)
         if index == 0:
             self.load_recent_activity()
+        elif index == self.analytics_index and not self.portal.preview:
+            self.set_analytics_loading(True)
         if not self.portal.preview:
             self.refresh_async()
+
+    def set_analytics_loading(self, active):
+        self.analytics_loading.setVisible(bool(active))
+        self.analytics_progress.setVisible(bool(active))
 
     def quick_action(self, page, action):
         self.show_page(page)
@@ -1436,11 +2166,15 @@ class DashboardPage(QWidget):
         if self.portal.preview:
             self.refresh()
             return
+        if self.pages.currentIndex() == self.analytics_index:
+            self.set_analytics_loading(True)
         if self.pending is None:
             self.sync_label.setText("Refreshing · showing last update")
             self.start_snapshot_task()
 
     def start_snapshot_task(self):
+        if self.pages.currentIndex() == self.analytics_index:
+            self.set_analytics_loading(True)
         self.revision += 1
         self.pending = SnapshotTask(self.portal, self.revision)
         self.pending.signals.finished.connect(self.poll_finished)
@@ -1449,6 +2183,7 @@ class DashboardPage(QWidget):
     @pyqtSlot(int, object)
     def poll_finished(self, revision, outcome):
         self.pending = None
+        self.set_analytics_loading(False)
         # A newer foreground read/write, a sign-out or an open form takes precedence.
         if revision != self.revision or not self.poll_timer.isActive() or QApplication.activeModalWidget() is not None:
             return
@@ -1678,15 +2413,11 @@ def main():
     mode.add_argument("--demo", action="store_true", help="open with disposable in-memory data")
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
-    app.setStyleSheet(DESIGN_STYLES + """
-        QCheckBox:enabled:hover, QComboBox:enabled:hover, QSpinBox:enabled:hover,
-        QLineEdit:enabled:hover { border-color: #A9B9CC; }
-        QTableWidget::item:hover:!selected, QListWidget::item:hover:!selected,
-        QHeaderView::section:hover, QMenu::item:selected { background: #EAF0F6; color: #17365D; }
-        #identityCard { background: #FFFFFF; border: 1px solid #E3E8EF; border-radius: 8px; padding: 5px 10px; }
-        #syncStatus { color: #52677F; background: #EAF0F6; border: 1px solid #D9E0E8;
-                      border-radius: 10px; padding: 5px 9px; font-size: 9pt; }
-    """)
+    theme = str(QSettings("USLP", "StudentLearningPortal").value("appearance", "light"))
+    if theme not in {"light", "dark"}:
+        theme = "light"
+    app.setProperty("uslpTheme", theme)
+    app.setStyleSheet(application_stylesheet(theme))
     app.setFont(QFont("Segoe UI", 10))
     error = None
     if args.demo:
