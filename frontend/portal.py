@@ -10,8 +10,9 @@ from pathlib import Path
 
 from .portal_client import DEFAULT_PROFILE, SAVED_PROFILE, Portal, PortalError
 from PyQt6.QtCore import (
-    QEasingCurve, QEvent, QPointF, QRectF, QObject, QRunnable, QSize, Qt, QThreadPool, QTimer,
-    QVariantAnimation, QPropertyAnimation, QSettings, pyqtSignal, pyqtSlot,
+    QEasingCurve, QEvent, QPoint, QPointF, QRectF, QObject, QParallelAnimationGroup,
+    QPropertyAnimation, QRunnable, QSize, Qt, QThreadPool, QTimer, QVariantAnimation,
+    QSettings, pyqtSignal, pyqtSlot,
 )
 from PyQt6.QtGui import (
     QColor, QCursor, QFont, QIcon, QKeySequence, QPainter, QPen, QPixmap, QPolygonF, QRadialGradient,
@@ -522,6 +523,12 @@ class LoginPage(QWidget):
         else:
             self.connection_label.setText("Choose portal-team.json from your backend developer.")
 
+    def transition_panels(self):
+        return [
+            (self.branding_panel.grab(), self.branding_panel.geometry()),
+            (self.login_panel.grab(), self.login_panel.geometry()),
+        ]
+
     def choose_connection(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose the team connection", "", "Team profile (*.json)")
         if path:
@@ -563,6 +570,7 @@ class LoginPage(QWidget):
         # LOGIN PANEL
 
         login_panel = QFrame()
+        self.login_panel = login_panel
         login_panel.setObjectName("loginPanel")
 
         login_layout = QVBoxLayout(login_panel)
@@ -636,6 +644,7 @@ class LoginPage(QWidget):
         # BRANDING PANEL
 
         branding_panel = QFrame()
+        self.branding_panel = branding_panel
         branding_panel.setObjectName("brandingPanel")
 
         branding_layout = QVBoxLayout(branding_panel)
@@ -3234,6 +3243,9 @@ class StudentPortalApp(QMainWindow):
         self.stack.addWidget(self.login_page)
         self.login_page.signed_in.connect(self.open_dashboard)
         self.dashboard_page = None
+        self._transition_animation = None
+        self._transition_labels = []
+        self._transition_running = False
         if portal.preview:
             self.portal.login("", "")
             self.open_dashboard()
@@ -3246,14 +3258,75 @@ class StudentPortalApp(QMainWindow):
             self.dashboard_page = None
 
     def open_dashboard(self):
+        if self._transition_running:
+            return
+        animate_transition = (
+            self.stack.currentWidget() is self.login_page
+            and self.isVisible()
+            and not self.portal.preview
+        )
+        panel_images = self.login_page.transition_panels() if animate_transition else None
         self.remove_dashboard()
         self.dashboard_page = DashboardPage(self.portal)
         self.dashboard_page.logout_requested.connect(self.logout)
         self.dashboard_page.access_changed.connect(self.open_dashboard)
+        if animate_transition:
+            self.dashboard_page.setEnabled(False)
         self.stack.addWidget(self.dashboard_page)
         self.stack.setCurrentWidget(self.dashboard_page)
+        if panel_images:
+            self.start_login_transition(panel_images)
+
+    def start_login_transition(self, panel_images):
+        self._transition_running = True
+        animation = QParallelAnimationGroup(self)
+        for index, (pixmap, panel_geometry) in enumerate(panel_images):
+            panel = QLabel(self.stack)
+            panel.setPixmap(pixmap)
+            panel.setGeometry(panel_geometry)
+            panel.setMargin(0)
+            panel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            panel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            panel.show()
+            panel.raise_()
+            self._transition_labels.append(panel)
+
+            movement = QPropertyAnimation(panel, b"pos", animation)
+            movement.setDuration(850)
+            movement.setStartValue(panel_geometry.topLeft())
+            end_x = -panel_geometry.width() if index == 0 else self.stack.width()
+            movement.setEndValue(QPoint(end_x, panel_geometry.y()))
+            movement.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            animation.addAnimation(movement)
+
+        self._transition_animation = animation
+        animation.finished.connect(self.finish_login_transition)
+        animation.start()
+
+    def finish_login_transition(self):
+        for panel in self._transition_labels:
+            panel.hide()
+            panel.deleteLater()
+        self._transition_labels.clear()
+        self._transition_animation = None
+        if self.dashboard_page is None or self.stack.currentWidget() is not self.dashboard_page:
+            self._transition_running = False
+            return
+        self.dashboard_page.setEnabled(True)
+        self._transition_running = False
+
+    def cancel_transition(self):
+        if self._transition_animation is not None:
+            self._transition_animation.stop()
+            self._transition_animation = None
+        for panel in self._transition_labels:
+            panel.hide()
+            panel.deleteLater()
+        self._transition_labels.clear()
+        self._transition_running = False
 
     def logout(self):
+        self.cancel_transition()
         if self.portal.preview:
             self.close()
             return
@@ -3269,6 +3342,7 @@ class StudentPortalApp(QMainWindow):
         self.login_page.username_input.setFocus()
 
     def closeEvent(self, event):
+        self.cancel_transition()
         if self.dashboard_page:
             self.dashboard_page.stop_sync()
         self.portal.logout()
